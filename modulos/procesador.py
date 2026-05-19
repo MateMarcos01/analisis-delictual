@@ -100,6 +100,112 @@ def _limpiar(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+# ─── Validación de integridad ────────────────────────────────────────────────
+
+def validar_datos_completos(df: pd.DataFrame) -> dict:
+    """
+    Valida la integridad y completitud de los datos.
+    Retorna un dict con estado y lista de problemas encontrados.
+
+    Parámetros:
+        df (pd.DataFrame): DataFrame a validar
+
+    Retorna:
+        dict: {
+            "valido": bool,
+            "problemas": [str],
+            "resumen": {estadísticas de validación}
+        }
+    """
+    problemas = []
+    resumen = {}
+
+    # ───── 1. VALIDAR NULOS EN COLUMNAS CRÍTICAS ─────────────────────────────
+    # .isnull() retorna un DataFrame booleano (True/False) para cada celda
+    # .sum() suma los True (=cuenta cuántos nulls hay en cada columna)
+    nulls_por_columna = df.isnull().sum()
+
+    # .to_dict() convierte una Series (pandas) a un dict de Python normal
+    # Ejemplo: Series([1, 2]) → {"col1": 1, "col2": 2}
+    nulls_dict = nulls_por_columna[nulls_por_columna > 0].to_dict()
+
+    if nulls_dict:
+        msg = f"Valores NULL encontrados: {nulls_dict}"
+        problemas.append(msg)
+        resumen["nulls_por_columna"] = nulls_dict
+    else:
+        resumen["nulls_por_columna"] = "Sin nulos [OK]"
+
+
+    # ───── 2. VALIDAR HORAS VÁLIDAS ──────────────────────────────────────────
+    # Si existe la columna "hora_num" (creada en _limpiar())
+    if "hora_num" in df.columns:
+        # Crear máscara booleana: True si hora está fuera del rango 0-23
+        # .loc[] es un indexador de pandas para seleccionar filas/columnas
+        # & es operador AND lógico
+        horas_invalidas = df.loc[(df["hora_num"] < 0) | (df["hora_num"] > 23)]
+
+        if len(horas_invalidas) > 0:
+            horas_unicas = horas_invalidas["hora_num"].unique().tolist()
+            msg = f"{len(horas_invalidas)} horas fuera de rango (0-23): {horas_unicas}"
+            problemas.append(msg)
+            resumen["horas_invalidas"] = {
+                "cantidad": len(horas_invalidas),
+                "valores": horas_unicas
+            }
+        else:
+            resumen["horas_invalidas"] = 0
+
+
+    # ───── 3. VALIDAR FECHAS RAZONABLES ──────────────────────────────────────
+    # .min() y .max() retornan el valor mínimo y máximo de una columna
+    fecha_min = df["fecha"].min()
+    fecha_max = df["fecha"].max()
+
+    # Verificar que no haya fechas del pasado muy lejano (antes de 2000)
+    if fecha_min.year < 2000:
+        msg = f"Fechas muy antiguas detectadas (antes de 2000): mínima = {fecha_min.date()}"
+        problemas.append(msg)
+        resumen["fechas_antiguas"] = str(fecha_min.date())
+
+    # Verificar que no haya fechas futuras (hoy es 2026, así que cualquiera > hoy es sospechosa)
+    from datetime import datetime
+    hoy = datetime.now()
+    fechas_futuras = df[df["fecha"] > pd.Timestamp(hoy)]
+    if len(fechas_futuras) > 0:
+        msg = f"{len(fechas_futuras)} registros con fechas futuras (después de hoy)"
+        problemas.append(msg)
+        resumen["fechas_futuras"] = len(fechas_futuras)
+
+
+    # ───── 4. VALIDAR QUE COLUMNAS CLAVE NO ESTÉN VACÍAS ─────────────────────
+    # .nunique() cuenta cuántos valores ÚNICOS hay en una columna
+    # Si es 0, la columna está completamente vacía
+    for col in ["tipo_delito", "jurisdiccion"]:
+        if df[col].nunique() == 0:
+            msg = f"Columna '{col}' está completamente vacía"
+            problemas.append(msg)
+
+
+    # ───── 5. ESTADÍSTICAS GENERALES ─────────────────────────────────────────
+    # len(df) retorna el número de filas del DataFrame
+    registros_con_nulos = df.isnull().any(axis=1).sum()
+    # .any(axis=1) chequea si hay al menos 1 NULL en CADA FILA
+    # axis=1 significa "verificar por fila" (axis=0 sería por columna)
+
+    resumen["total_registros"] = len(df)
+    resumen["registros_con_nulos"] = registros_con_nulos
+    resumen["registros_sanos"] = len(df) - registros_con_nulos
+    resumen["cobertura_datos"] = f"{((len(df) - registros_con_nulos) / len(df) * 100):.1f}%"
+
+
+    return {
+        "valido": len(problemas) == 0,
+        "problemas": problemas,
+        "resumen": resumen
+    }
+
+
 # ─── Filtros ──────────────────────────────────────────────────────────────────
 
 def filtrar(
