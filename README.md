@@ -136,3 +136,12 @@ analizador_delictual/
 ## Autor
 
 Proyecto desarrollado como trabajo anual de **Prácticas Profesionalizantes**.
+
+
+## Cómo ejecutar
+
+```bash
+cd /home/marcosmateo/Marcos/2do\ año\ TDS/Practica\ II/analizador_delictual/
+source venv/bin/activate
+python3 gui.py
+```
