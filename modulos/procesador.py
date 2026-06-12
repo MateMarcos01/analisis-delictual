@@ -4,11 +4,12 @@ Carga, limpieza y transformación del Excel de denuncias.
 """
 import pandas as pd
 import numpy as np
+import csv
 from pathlib import Path
 
 
 COLUMNAS_REQUERIDAS = {
-    "nro_denuncia", "fecha", "hora",
+    "legajo", "fecha", "hora",
     "tipo_delito", "jurisdiccion",
 }
 
@@ -31,7 +32,61 @@ def cargar_excel(ruta: str) -> pd.DataFrame:
     if ruta.suffix.lower() in (".xlsx", ".xls"):
         df = pd.read_excel(ruta, engine="openpyxl")
     elif ruta.suffix.lower() == ".csv":
-        df = pd.read_csv(ruta)
+        # Intentar lectura directa primero
+        try:
+            df = pd.read_csv(ruta)
+        except Exception:
+            df = None
+
+        # Normalizar nombres y comprobar columnas; si faltan, reintentar
+        def _cols_ok(df_):
+            if df_ is None:
+                return False
+            cols = [c.strip().lower().replace(" ", "_") for c in df_.columns]
+            return COLUMNAS_REQUERIDAS.issubset(set(cols))
+
+        if not _cols_ok(df):
+            # Intentar detectar separador con csv.Sniffer y reintentar con encoding comunes
+            contenido = None
+            try:
+                with open(ruta, "r", errors="replace") as f:
+                    contenido = f.read(8192)
+                sniffer = csv.Sniffer()
+                dialect = sniffer.sniff(contenido)
+                sep = dialect.delimiter
+            except Exception:
+                sep = None
+
+            intentos = []
+            if sep:
+                intentos.append({"sep": sep, "encoding": None})
+            # probar separadores comunes y codificaciones
+            for s in [";", "\t", ",", "|"]:
+                intentos.append({"sep": s, "encoding": None})
+                intentos.append({"sep": s, "encoding": "latin1"})
+
+            df_ok = None
+            for intento in intentos:
+                try:
+                    if intento["encoding"]:
+                        df_try = pd.read_csv(ruta, sep=intento["sep"], encoding=intento["encoding"] )
+                    else:
+                        df_try = pd.read_csv(ruta, sep=intento["sep"])
+                    if _cols_ok(df_try):
+                        df_ok = df_try
+                        break
+                except Exception:
+                    continue
+
+            if df_ok is not None:
+                df = df_ok
+            else:
+                # último intento: leer con engine python y sep=None (pandas inferirá)
+                try:
+                    df = pd.read_csv(ruta, sep=None, engine="python")
+                except Exception:
+                    # dejar df como estaba (posible None) y que la validación posterior falle
+                    pass
     else:
         raise ValueError("Formato no soportado. Usar .xlsx o .csv")
 
@@ -56,7 +111,7 @@ def _limpiar(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     # Fechas
-    df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+    df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce", dayfirst=True)
     registros_invalidos = df["fecha"].isna().sum()
     if registros_invalidos:
         print(f"  ⚠  {registros_invalidos} registros con fecha inválida eliminados.")
@@ -75,8 +130,13 @@ def _limpiar(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].astype(str).str.strip().str.title()
 
     # Eliminar duplicados exactos
+    # (el nro_denuncia puede repetirse entre jurisdicciones distintas;
+    # el duplicado real es la combinación jurisdiccion + nro_denuncia)
+    
+    
     antes = len(df)
-    df = df.drop_duplicates(subset=["nro_denuncia"])
+    subset_dup = ["jurisdiccion", "legajo"] if "jurisdiccion" in df.columns else ["legajo"]
+    df = df.drop_duplicates(subset=subset_dup)
     eliminados = antes - len(df)
     if eliminados:
         print(f"  ⚠  {eliminados} duplicados eliminados.")
