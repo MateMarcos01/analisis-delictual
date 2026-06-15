@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import threading
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # Importar módulos propios
 import sys
@@ -43,6 +44,7 @@ class App(tk.Tk):
         self.df_original = None
         self.df_filtrado  = None
         self.rutas_graficos = {}
+        self.figs_graficos = {}
 
         self._construir_ui()
 
@@ -132,6 +134,18 @@ class App(tk.Tk):
         hsb.pack(side="bottom", fill="x")
         vsb.pack(side="right",  fill="y")
         self.tree.pack(fill="both", expand=True)
+        # Tab: Gráficos
+        tab_graficos = tk.Frame(self.notebook, bg=C["panel"])
+        self.notebook.add(tab_graficos, text="  Gráficos  ")
+
+        # Sub-notebook para alojar cada gráfico en su propia pestaña
+        self.notebook_graficos = ttk.Notebook(tab_graficos)
+        self.notebook_graficos.pack(fill="both", expand=True)
+
+        self.lbl_sin_graficos = tk.Label(
+            self.notebook_graficos, text="Generá los gráficos para visualizarlos aquí.",
+            bg=C["panel"], fg=C["muted"], font=("Helvetica", 10)
+        )
 
         # Barra de estado
         self.barra_estado = tk.Label(self.panel, text="Listo.",
@@ -186,13 +200,17 @@ class App(tk.Tk):
         self._log("Generando gráficos…")
         def tarea():
             try:
-                self.rutas_graficos = generar_todos(self.df_filtrado)
+                rutas, figs = generar_todos(self.df_filtrado)
+                self.rutas_graficos = rutas
+                self.figs_graficos = figs
                 self._log(f"✓  {len(self.rutas_graficos)} gráficos guardados en salidas/graficos/")
                 self._estado(f"{len(self.rutas_graficos)} gráficos generados.")
-                messagebox.showinfo("Gráficos", f"Se generaron {len(self.rutas_graficos)} gráficos en salidas/graficos/")
+                self.after(0, self._mostrar_graficos_en_ui)
+                self.after(0, lambda: messagebox.showinfo(
+                    "Gráficos", f"Se generaron {len(self.rutas_graficos)} gráficos en salidas/graficos/"))
             except Exception as e:
                 self._log(f"✗  Error: {e}")
-                messagebox.showerror("Error", str(e))
+                self.after(0, lambda: messagebox.showerror("Error", str(e)))
         threading.Thread(target=tarea, daemon=True).start()
 
     def _exportar_pdf(self):
@@ -266,6 +284,29 @@ class App(tk.Tk):
             self.tree.column(c, width=90, anchor="center")
         for _, row in pivot.iterrows():
             self.tree.insert("", "end", values=list(row))
+            
+    def _mostrar_graficos_en_ui(self):
+        # Limpiar pestañas previas
+        for tab_id in self.notebook_graficos.tabs():
+            self.notebook_graficos.forget(tab_id)
+
+        NOMBRES = {
+            "barras_tipo":          "Tipo de delito",
+            "serie_temporal":       "Serie temporal",
+            "barras_jurisdiccion":  "Por jurisdicción",
+            "heatmap_horario":      "Heatmap horario",
+            "donut":                "Distribución",
+            "ranking_jurisdiccion": "Ranking jurisdicción",
+            "comparacion_anual":    "Comparación anual",
+        }
+
+        for nombre, fig in self.figs_graficos.items():
+            tab = tk.Frame(self.notebook_graficos, bg=C["panel"])
+            self.notebook_graficos.add(tab, text=NOMBRES.get(nombre, nombre))
+
+            canvas = FigureCanvasTkAgg(fig, master=tab)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def aplicar_filtros(self, kwargs: dict):
         """Llamado desde VentanaFiltros al confirmar."""

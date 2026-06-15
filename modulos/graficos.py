@@ -35,7 +35,7 @@ def _guardar(fig, carpeta: str, nombre: str) -> str:
     Path(carpeta).mkdir(parents=True, exist_ok=True)
     ruta = str(Path(carpeta) / nombre)
     fig.savefig(ruta, bbox_inches="tight", dpi=150)
-    return ruta
+    return ruta, fig
 
 
 # ─── 1. Barras por tipo de delito ─────────────────────────────────────────────
@@ -253,10 +253,8 @@ def grafico_comparacion_anual(df: pd.DataFrame,
 # ─── Generar todos de una vez ─────────────────────────────────────────────────
 
 def generar_todos(df: pd.DataFrame, carpeta="salidas/graficos") -> dict:
-    """
-    Genera los 7 gráficos y devuelve un dict {nombre: ruta}.
-    """
     rutas = {}
+    figs = {}
     funciones = [
         ("barras_tipo",         grafico_barras_tipo),
         ("serie_temporal",      grafico_serie_temporal),
@@ -270,8 +268,10 @@ def generar_todos(df: pd.DataFrame, carpeta="salidas/graficos") -> dict:
 
     for nombre, fn in funciones:
         try:
-            rutas[nombre] = fn(df, carpeta)
+            ruta, fig = fn(df, carpeta)
+            rutas[nombre] = ruta
+            figs[nombre] = fig
             print(f"  ✓  {nombre}")
         except Exception as e:
             print(f"  ✗  {nombre}: {e}")
-    return rutas
+    return rutas, figs
