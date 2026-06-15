@@ -57,3 +57,4 @@ datos/*.csv
 # Environment variables
 .env
 .env.local
+*.~lock.*
