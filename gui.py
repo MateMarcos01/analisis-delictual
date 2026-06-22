@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import threading
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from modulos.mapa import crear_tab_mapa
 
 # Importar módulos propios
 import sys
@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_pivot
 from modulos.graficos   import generar_todos
 from modulos.exportador import generar_reporte
+from modulos.mapa import crear_tab_mapa
 
 # ─── Paleta de colores ────────────────────────────────────────────────────────
 C = {
@@ -110,6 +111,7 @@ class App(tk.Tk):
             self.tarjetas[clave] = lbl
 
         # Área de contenido / log
+        
         self.notebook = ttk.Notebook(self.panel)
         self.notebook.pack(fill="both", expand=True, padx=16, pady=12)
 
@@ -123,6 +125,7 @@ class App(tk.Tk):
         self.log.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.log.pack(fill="both", expand=True)
+        
 
         # Tab: Tabla resumen
         tab_tabla = tk.Frame(self.notebook, bg=C["panel"])
@@ -146,6 +149,20 @@ class App(tk.Tk):
             self.notebook_graficos, text="Generá los gráficos para visualizarlos aquí.",
             bg=C["panel"], fg=C["muted"], font=("Helvetica", 10)
         )
+        
+        self.lbl_sin_graficos = tk.Label(
+            self.notebook_graficos, text="Generá los gráficos para visualizarlos aquí.",
+            bg=C["panel"], fg=C["muted"], font=("Helvetica", 10)
+        )
+
+        # Tab: Mapa
+        self.tab_mapa = tk.Frame(self.notebook, bg=C["panel"])
+        self.mapa_widget = None  # se carga cuando llegan los datos
+        
+         # Mapa 
+        self.tab_mapa = tk.Frame(self.notebook, bg=C["panel"])
+        self.notebook.add(self.tab_mapa, text="  🗺️ Mapa  ")
+        self.mapa_widget = None  # se inicializa cuando se cargan datos
 
         # Barra de estado
         self.barra_estado = tk.Label(self.panel, text="Listo.",
@@ -284,6 +301,24 @@ class App(tk.Tk):
             self.tree.column(c, width=90, anchor="center")
         for _, row in pivot.iterrows():
             self.tree.insert("", "end", values=list(row))
+
+        # Cargar mapa — fuera del for, alineado con el resto del método
+        self._cargar_mapa(df)
+
+    def _cargar_mapa(self, df):
+        """Inicializa o recarga el mapa con los datos actuales."""
+        for widget in self.tab_mapa.winfo_children():
+            widget.destroy()
+
+        if "latitud" in df.columns and "longitud" in df.columns:
+            from modulos.mapa import crear_tab_mapa
+            crear_tab_mapa(self.tab_mapa, df)   # el mapa se empaqueta dentro del frame
+        else:
+            tk.Label(
+                self.tab_mapa,
+                text="El archivo no contiene columnas 'latitud' y 'longitud'.",
+                bg=C["panel"], fg=C["muted"], font=("Helvetica", 10)
+            ).pack(expand=True)
             
     def _mostrar_graficos_en_ui(self):
         # Limpiar pestañas previas

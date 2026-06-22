@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_pivot
 from modulos.graficos   import generar_todos
 from modulos.exportador import generar_reporte
+import modulos.mapa     # Asegura que el módulo del mapa se ejecute (crea el mapa.png)
 
 
 def main():
