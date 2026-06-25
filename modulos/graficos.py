@@ -40,10 +40,15 @@ def _guardar(fig, carpeta: str, nombre: str) -> str:
 
 # ─── 1. Barras por tipo de delito ─────────────────────────────────────────────
 
+def _col_delito(df):
+    return "delito" if "delito" in df.columns else "tipo_delito"
+
+
 def grafico_barras_tipo(df: pd.DataFrame,
                         carpeta="salidas/graficos") -> str:
     _estilo()
-    conteo = df["tipo_delito"].value_counts().sort_values(ascending=False)
+    col = _col_delito(df)
+    conteo = df[col].value_counts().sort_values(ascending=False)
 
     fig, ax = plt.subplots(figsize=(9, 4.5))
     bars = ax.bar(conteo.index, conteo.values,
@@ -58,8 +63,8 @@ def grafico_barras_tipo(df: pd.DataFrame,
             ha="center", va="bottom", fontsize=9, color="#444"
         )
 
-    ax.set_title("Denuncias por tipo de delito")
-    ax.set_xlabel("Tipo de delito")
+    ax.set_title("Denuncias por delito")
+    ax.set_xlabel("Delito")
     ax.set_ylabel("Cantidad de denuncias")
     ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
     plt.tight_layout()
@@ -109,18 +114,19 @@ def grafico_serie_temporal(df: pd.DataFrame,
 def grafico_barras_jurisdiccion(df: pd.DataFrame,
                                 carpeta="salidas/graficos") -> str:
     _estilo()
-    pivot = pd.crosstab(df["jurisdiccion"], df["tipo_delito"])
+    col = _col_delito(df)
+    pivot = pd.crosstab(df["jurisdiccion"], df[col])
 
     fig, ax = plt.subplots(figsize=(10, 5))
     pivot.plot(kind="bar", stacked=True, ax=ax,
                color=PALETA[:len(pivot.columns)], edgecolor="white",
                linewidth=0.4, width=0.65)
 
-    ax.set_title("Tipo de delito por jurisdicción")
+    ax.set_title("Delito por jurisdicción")
     ax.set_xlabel("Jurisdicción")
     ax.set_ylabel("Denuncias")
     ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha="right")
-    ax.legend(title="Tipo de delito", bbox_to_anchor=(1.02, 1),
+    ax.legend(title="Delito", bbox_to_anchor=(1.02, 1),
               loc="upper left", fontsize=8, title_fontsize=9)
     plt.tight_layout()
     return _guardar(fig, carpeta, "barras_jurisdiccion.png")
@@ -167,7 +173,8 @@ def grafico_heatmap_horario(df: pd.DataFrame,
 def grafico_donut(df: pd.DataFrame,
                   carpeta="salidas/graficos") -> str:
     _estilo()
-    conteo = df["tipo_delito"].value_counts()
+    col = _col_delito(df)
+    conteo = df[col].value_counts()
     total  = conteo.sum()
 
     fig, ax = plt.subplots(figsize=(7, 5))
@@ -192,7 +199,7 @@ def grafico_donut(df: pd.DataFrame,
     )
     ax.text(0, 0, f"Total\n{total:,}", ha="center", va="center",
             fontsize=11, fontweight="bold", color="#333")
-    ax.set_title("Distribución por tipo de delito")
+    ax.set_title("Distribución por delito")
     plt.tight_layout()
     return _guardar(fig, carpeta, "donut_tipos.png")
 

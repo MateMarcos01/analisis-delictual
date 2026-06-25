@@ -128,16 +128,6 @@ def _mostrar_webview(frame, lbl, ruta_html):
 
 
 def _abrir_ventana(ruta_html):
-    """Lanza pywebview en un hilo separado."""
-    import webview
-
-    def _run():
-        webview.create_window(
-            "Mapa Delictual — Departamental 7",
-            url=f"file://{ruta_html}",
-            width=1100, height=750,
-            resizable=True
-        )
-        webview.start()
-
-    threading.Thread(target=_run, daemon=True).start()
+    """Abre el HTML del mapa en el navegador predeterminado del sistema."""
+    import webbrowser
+    webbrowser.open(f"file://{ruta_html}")

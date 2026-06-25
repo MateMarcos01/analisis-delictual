@@ -14,7 +14,7 @@ COLUMNAS_REQUERIDAS = {
 }
 
 COLUMNAS_OPCIONALES = {
-    "modalidad", "estado", "latitud", "longitud", "descripcion",
+    "modalidad", "estado", "latitud", "longitud", "descripcion", "delito",
 }
 
 
@@ -125,7 +125,7 @@ def _limpiar(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     # Columnas de texto → strip + title case
-    for col in ["tipo_delito", "jurisdiccion", "modalidad", "estado"]:
+    for col in ["tipo_delito", "delito", "jurisdiccion", "modalidad", "estado"]:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip().str.title()
 
@@ -288,7 +288,8 @@ def filtrar(
     if jurisdicciones:
         mask &= df["jurisdiccion"].isin(jurisdicciones)
     if tipos_delito:
-        mask &= df["tipo_delito"].isin(tipos_delito)
+        col = _col_delito(df)
+        mask &= df[col].isin(tipos_delito)
     if anio:
         mask &= df["anio"] == int(anio)
 
@@ -297,15 +298,21 @@ def filtrar(
 
 # ─── Resúmenes ────────────────────────────────────────────────────────────────
 
+def _col_delito(df: pd.DataFrame) -> str:
+    """Devuelve 'delito' si la columna existe, sino 'tipo_delito'."""
+    return "delito" if "delito" in df.columns else "tipo_delito"
+
+
 def resumen_general(df: pd.DataFrame) -> dict:
     """Devuelve un dict con métricas clave para mostrar en la GUI."""
+    col = _col_delito(df)
     return {
         "total_denuncias":   len(df),
         "periodo_desde":     df["fecha"].min().strftime("%d/%m/%Y"),
         "periodo_hasta":     df["fecha"].max().strftime("%d/%m/%Y"),
-        "tipos_delito":      df["tipo_delito"].nunique(),
+        "tipos_delito":      df[col].nunique(),
         "jurisdicciones":    df["jurisdiccion"].nunique(),
-        "delito_principal":  df["tipo_delito"].value_counts().idxmax(),
+        "delito_principal":  df[col].value_counts().idxmax(),
         "jurisdiccion_top":  df["jurisdiccion"].value_counts().idxmax(),
         "mes_pico":          df["mes_nombre"].value_counts().idxmax(),
     }
@@ -313,6 +320,8 @@ def resumen_general(df: pd.DataFrame) -> dict:
 
 def tabla_pivot(df: pd.DataFrame,
                 filas="jurisdiccion",
-                columnas="tipo_delito") -> pd.DataFrame:
+                columnas=None) -> pd.DataFrame:
     """Tabla cruzada lista para mostrar o exportar."""
+    if columnas is None:
+        columnas = _col_delito(df)
     return pd.crosstab(df[filas], df[columnas], margins=True, margins_name="Total")

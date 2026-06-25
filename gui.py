@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import threading
-from modulos.mapa import crear_tab_mapa
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # Importar módulos propios
 import sys
@@ -137,23 +137,30 @@ class App(tk.Tk):
         hsb.pack(side="bottom", fill="x")
         vsb.pack(side="right",  fill="y")
         self.tree.pack(fill="both", expand=True)
-        # Tab: Gráficos
+        # Tab: Gráficos — canvas scrollable
         tab_graficos = tk.Frame(self.notebook, bg=C["panel"])
         self.notebook.add(tab_graficos, text="  Gráficos  ")
 
-        # Sub-notebook para alojar cada gráfico en su propia pestaña
-        self.notebook_graficos = ttk.Notebook(tab_graficos)
-        self.notebook_graficos.pack(fill="both", expand=True)
+        _cv = tk.Canvas(tab_graficos, bg=C["panel"], highlightthickness=0)
+        _sb = ttk.Scrollbar(tab_graficos, orient="vertical", command=_cv.yview)
+        self.frame_graficos = tk.Frame(_cv, bg=C["panel"])
+        self.frame_graficos.bind(
+            "<Configure>",
+            lambda e: _cv.configure(scrollregion=_cv.bbox("all"))
+        )
+        self._canvas_graficos = _cv
+        _cv.create_window((0, 0), window=self.frame_graficos, anchor="nw")
+        _cv.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        _cv.pack(side="left", fill="both", expand=True)
+        _cv.bind_all("<Button-4>", lambda e: _cv.yview_scroll(-1, "units"))
+        _cv.bind_all("<Button-5>", lambda e: _cv.yview_scroll(1, "units"))
 
-        self.lbl_sin_graficos = tk.Label(
-            self.notebook_graficos, text="Generá los gráficos para visualizarlos aquí.",
+        tk.Label(
+            self.frame_graficos,
+            text="Generá los gráficos para visualizarlos aquí.",
             bg=C["panel"], fg=C["muted"], font=("Helvetica", 10)
-        )
-        
-        self.lbl_sin_graficos = tk.Label(
-            self.notebook_graficos, text="Generá los gráficos para visualizarlos aquí.",
-            bg=C["panel"], fg=C["muted"], font=("Helvetica", 10)
-        )
+        ).pack(expand=True, pady=40)
 
         # Tab: Mapa
         self.tab_mapa = tk.Frame(self.notebook, bg=C["panel"])
@@ -276,7 +283,7 @@ class App(tk.Tk):
     def _acerca_de(self):
         messagebox.showinfo(
             "Acerca de",
-            "Analizador Delictual v1.0\n\n"
+            "Analizador Delictual v1.1\n\n"
             "Sistema de análisis estadístico de denuncias.\n"
             "Desarrollado con Python · pandas · matplotlib · seaborn\n\n"
             "Proyecto anual — Prácticas Profesionalizantes"
@@ -321,27 +328,48 @@ class App(tk.Tk):
             ).pack(expand=True)
             
     def _mostrar_graficos_en_ui(self):
-        # Limpiar pestañas previas
-        for tab_id in self.notebook_graficos.tabs():
-            self.notebook_graficos.forget(tab_id)
+        for widget in self.frame_graficos.winfo_children():
+            widget.destroy()
 
+        ORDEN = [
+            "donut", "serie_temporal", "barras_tipo",
+            "barras_jurisdiccion", "heatmap_horario",
+            "ranking_jurisdiccion", "comparacion_anual",
+        ]
         NOMBRES = {
             "barras_tipo":          "Tipo de delito",
-            "serie_temporal":       "Serie temporal",
+            "serie_temporal":       "Evolución mensual",
             "barras_jurisdiccion":  "Por jurisdicción",
             "heatmap_horario":      "Heatmap horario",
-            "donut":                "Distribución",
+            "donut":                "Distribución por tipo",
             "ranking_jurisdiccion": "Ranking jurisdicción",
             "comparacion_anual":    "Comparación anual",
         }
 
-        for nombre, fig in self.figs_graficos.items():
-            tab = tk.Frame(self.notebook_graficos, bg=C["panel"])
-            self.notebook_graficos.add(tab, text=NOMBRES.get(nombre, nombre))
+        for nombre in ORDEN:
+            if nombre not in self.figs_graficos:
+                continue
+            fig = self.figs_graficos[nombre]
 
-            canvas = FigureCanvasTkAgg(fig, master=tab)
+            tk.Label(
+                self.frame_graficos,
+                text=NOMBRES.get(nombre, nombre),
+                bg=C["panel"], fg=C["azul"],
+                font=("Helvetica", 11, "bold")
+            ).pack(anchor="w", padx=20, pady=(16, 2))
+
+            canvas = FigureCanvasTkAgg(fig, master=self.frame_graficos)
             canvas.draw()
-            canvas.get_tk_widget().pack(fill="both", expand=True)
+            canvas.get_tk_widget().pack(fill="x", padx=16, pady=(0, 4))
+
+            ttk.Separator(self.frame_graficos, orient="horizontal").pack(
+                fill="x", padx=16, pady=6
+            )
+
+        self.frame_graficos.update_idletasks()
+        self._canvas_graficos.configure(
+            scrollregion=self._canvas_graficos.bbox("all")
+        )
 
     def aplicar_filtros(self, kwargs: dict):
         """Llamado desde VentanaFiltros al confirmar."""
@@ -401,10 +429,11 @@ class VentanaFiltros(tk.Toplevel):
             self.lb_juris.insert("end", j)
         self.lb_juris.grid(row=1, column=1, sticky="w")
 
-        # Tipo de delito
-        tk.Label(frame, text="Tipos de delito:", bg=C["bg"], fg=C["texto"],
+        # Delito
+        col_delito = "delito" if (df is not None and "delito" in df.columns) else "tipo_delito"
+        tk.Label(frame, text="Delito:", bg=C["bg"], fg=C["texto"],
                  font=("Helvetica", 9, "bold")).grid(row=2, column=0, sticky="nw", pady=4)
-        tipos = sorted(df["tipo_delito"].unique().tolist())
+        tipos = sorted(df[col_delito].unique().tolist())
         self.lb_tipos = tk.Listbox(frame, selectmode="multiple", height=6,
                                    exportselection=False, font=("Helvetica", 9))
         for t in tipos:
