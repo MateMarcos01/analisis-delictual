@@ -28,11 +28,12 @@ registros = []
 for i in range(1, n + 1):
     dias_offset = random.randint(0, total_dias)
     # pico en horario tarde-noche y fin de semana
-    hora   = int(np.random.choice(range(24), p=[
+    pesos_hora = np.array([
         0.01,0.01,0.01,0.01,0.02,0.02,0.03,0.04,
         0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.07,
         0.07,0.07,0.07,0.06,0.05,0.04,0.03,0.02
-    ]))
+    ])
+    hora   = int(np.random.choice(range(24), p=pesos_hora / pesos_hora.sum()))
     minuto = random.randint(0, 59)
     fecha  = fecha_inicio + timedelta(days=dias_offset, hours=hora, minutes=minuto)
 
