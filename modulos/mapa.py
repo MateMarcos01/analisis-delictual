@@ -8,7 +8,7 @@ import logging
 import math
 from pathlib import Path
 import folium
-from modulos.graficos import _color_delito
+from modulos.graficos import _col_delito, _color_delito
 from modulos.rutas import ruta_mapa
 from folium.plugins import FeatureGroupSubGroup, HeatMap, MarkerCluster
 
@@ -83,7 +83,10 @@ def puntos_validos(df):
     if "latitud" not in df.columns or "longitud" not in df.columns:
         return []
 
-    col_tipo = "tipo_delito" if "tipo_delito" in df.columns else "delito"
+    # Las capas del mapa van por DELITO (la categoría normalizada). La carátula
+    # (tipo_delito) es el detalle de cada causa y solo se muestra en el globo.
+    col_tipo = _col_delito(df)
+    con_caratula = col_tipo != "tipo_delito" and "tipo_delito" in df.columns
     puntos = []
 
     for _, fila in df.dropna(subset=["latitud", "longitud"]).iterrows():
@@ -100,15 +103,27 @@ def puntos_validos(df):
             "lon": lon,
             "jurisdiccion": str(fila.get("jurisdiccion", "Sin jurisdicción")),
             "tipo": str(fila.get(col_tipo, "Sin tipo")),
+            "caratula": str(fila["tipo_delito"]) if con_caratula else "",
             "modalidad": str(fila.get("modalidad", "")),
             "fecha": str(fila.get("fecha", ""))[:10],
         })
 
     return puntos
 
+def _orden_delito(nombre: str):
+    """Mismo orden que los gráficos: Robo, Hurto, Ttva Robo, Ttva Hurto y el resto."""
+    n = nombre.lower()
+    tentativa = "tentativa" in n or "ttva" in n
+    if "robo" in n:
+        return (2 if tentativa else 0, n)
+    if "hurto" in n:
+        return (3 if tentativa else 1, n)
+    return (4, n)
+
+
 def tipos_disponibles(df):
-    """Tipos de delito con al menos un punto válido (para armar los checkboxes)."""
-    return sorted({p["tipo"] for p in puntos_validos(df)})
+    """Delitos con al menos un punto válido (para armar los checkboxes)."""
+    return sorted({p["tipo"] for p in puntos_validos(df)}, key=_orden_delito)
 
 
 def _leyenda_html(tipos):
@@ -144,9 +159,14 @@ def generar_mapa_html(df, tipos=None, calor=False, ruta=None) -> Path:
         location=[LAT_CENTRO, LON_CENTRO],
         zoom_start=ZOOM_INICIAL,
         prefer_canvas=True,
+        tiles=None,
+    )
+    # control=False: el mapa base no aparece como opción en la lista de capas
+    folium.TileLayer(
         tiles="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
         attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/">Humanitarian OpenStreetMap Team</a>',
-    )
+        control=False,
+    ).add_to(mapa)
 
     # El calor se agrega primero para que los círculos queden por encima
     if calor and puntos:
@@ -163,7 +183,7 @@ def generar_mapa_html(df, tipos=None, calor=False, ruta=None) -> Path:
         options={"maxClusterRadius": 70},
     ).add_to(mapa)
 
-    tipos_sel = sorted({p["tipo"] for p in puntos})
+    tipos_sel = sorted({p["tipo"] for p in puntos}, key=_orden_delito)
     for tipo in tipos_sel:
         grupo = FeatureGroupSubGroup(cluster, name=tipo)
         grupo.add_to(mapa)
@@ -174,11 +194,15 @@ def generar_mapa_html(df, tipos=None, calor=False, ruta=None) -> Path:
             t = html.escape(p["tipo"])
             mod = html.escape(p["modalidad"])
             fecha = html.escape(p["fecha"])
+            caratula = (
+                f"<b>Carátula:</b> {html.escape(p['caratula'])}<br>" if p["caratula"] else ""
+            )
 
             popup_html = f"""
             <div style="font-family: Arial; font-size: 13px; min-width: 180px;">
                 <b>🏛️ {jur}</b><br>
                 <b>Delito:</b> {t}<br>
+                {caratula}
                 <b>Modalidad:</b> {mod}<br>
                 <b>Fecha:</b> {fecha}
             </div>

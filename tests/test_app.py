@@ -10,7 +10,7 @@ import cli
 import main
 from modulos import graficos, rutas
 from modulos.graficos import generar_todos
-from modulos.mapa import generar_mapa_html
+from modulos.mapa import generar_mapa_html, tipos_disponibles
 from modulos.procesador import _limpiar
 
 
@@ -175,6 +175,26 @@ def test_el_mapa_se_guarda_en_la_carpeta_de_trabajo(carpeta_de_trabajo):
     ruta = generar_mapa_html(df)
     assert ruta == carpeta_de_trabajo / "mapa.html"
     assert ruta.stat().st_size > 0
+
+
+def test_las_capas_del_mapa_son_los_delitos_y_no_las_caratulas(tmp_path):
+    df = _limpiar(pd.DataFrame([
+        {"legajo": i, "fecha": "4/3/2025", "hora": "10:00", "jurisdiccion": "COMISARIA 13°",
+         "tipo_delito": caratula, "DELITO": delito, "latitud": -31.53, "longitud": -68.53}
+        for i, (caratula, delito) in enumerate([
+            ("ROBO AGRAVADO", "ROBO"), ("HURTO CALIFICADO", "HURTO"),
+            ("ABIGEATO", "OTROS"), ("TTVA. ROBO", "TTVA ROBO"),
+        ])
+    ]).rename(columns={"DELITO": "delito"}))
+
+    assert tipos_disponibles(df) == ["Robo", "Hurto", "Ttva Robo", "Otros"]
+
+    contenido = generar_mapa_html(df, ruta=tmp_path / "mapa.html").read_text(encoding="utf-8")
+    capas = contenido[contenido.index("overlays"):]
+    assert '"Robo"' in capas and '"Otros"' in capas
+    assert "Robo Agravado" not in capas and "Abigeato" not in capas
+    assert "tile.openstreetmap.fr" not in capas          # el mapa base no es una opción
+    assert "Car\\u00e1tula" in contenido or "Carátula" in contenido   # el detalle va en el globo
 
 
 # ─── Modo terminal ────────────────────────────────────────────────────────────
