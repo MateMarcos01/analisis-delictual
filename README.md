@@ -1,4 +1,6 @@
-# Analizador Delictual
+# Vistana
+
+*De Excel a reportes PDF.*
 
 Aplicación de escritorio para el análisis estadístico de denuncias delictuales, desarrollada en Python.
 Proyecto anual — Prácticas Profesionalizantes.

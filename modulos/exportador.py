@@ -15,23 +15,27 @@ from reportlab.platypus import (
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
+from modulos.marca import LEMA, LOGO, NOMBRE_VISIBLE
+
 ANCHO, ALTO = A4
 MARGEN      = 2 * cm
-AZUL        = colors.HexColor("#534AB7")
+MARGEN_SUPERIOR = 2.8 * cm   # deja lugar al membrete
+PRIMARIO    = colors.HexColor("#DC143C")
+ACENTO      = colors.HexColor("#FF7F50")
 GRIS_CLARO  = colors.HexColor("#F1EFE8")
-GRIS_TEXTO  = colors.HexColor("#444441")
+GRIS_TEXTO  = colors.HexColor("#4A4A4A")
 
 
 def _estilos():
     base = getSampleStyleSheet()
     titulo = ParagraphStyle(
         "titulo", parent=base["Title"],
-        fontSize=20, textColor=AZUL,
+        fontSize=20, textColor=PRIMARIO,
         spaceAfter=6, alignment=TA_CENTER,
     )
     subtitulo = ParagraphStyle(
         "subtitulo", parent=base["Heading2"],
-        fontSize=13, textColor=AZUL,
+        fontSize=13, textColor=PRIMARIO,
         spaceBefore=14, spaceAfter=4,
     )
     normal = ParagraphStyle(
@@ -40,6 +44,26 @@ def _estilos():
         leading=14,
     )
     return titulo, subtitulo, normal
+
+
+def _membrete(canvas, doc):
+    """Encabezado de cada página: logo, nombre de la app y lema."""
+    canvas.saveState()
+    x_texto = MARGEN
+    if LOGO.is_file():
+        lado = 1.4 * cm
+        canvas.drawImage(str(LOGO), MARGEN, ALTO - 2.0 * cm, width=lado, height=lado, mask="auto")
+        x_texto += lado + 0.3 * cm
+    canvas.setFillColor(PRIMARIO)
+    canvas.setFont("Helvetica-Bold", 15)
+    canvas.drawString(x_texto, ALTO - 1.25 * cm, NOMBRE_VISIBLE)
+    canvas.setFillColor(GRIS_TEXTO)
+    canvas.setFont("Helvetica", 9)
+    canvas.drawString(x_texto, ALTO - 1.7 * cm, LEMA)
+    canvas.setStrokeColor(ACENTO)
+    canvas.setLineWidth(1)
+    canvas.line(MARGEN, ALTO - 2.2 * cm, ANCHO - MARGEN, ALTO - 2.2 * cm)
+    canvas.restoreState()
 
 
 def nombre_reporte() -> str:
@@ -71,15 +95,14 @@ def generar_reporte(
         ruta_pdf,
         pagesize=A4,
         leftMargin=MARGEN, rightMargin=MARGEN,
-        topMargin=MARGEN,  bottomMargin=MARGEN,
+        topMargin=MARGEN_SUPERIOR, bottomMargin=MARGEN,
     )
 
     est_titulo, est_sub, est_normal = _estilos()
     story = []
 
     # ── Portada ──────────────────────────────────────────────────────────────
-    story.append(Spacer(1, 1.5 * cm))
-    story.append(Paragraph("Sistema de Análisis Delictual", est_titulo))
+    story.append(Spacer(1, 0.8 * cm))
     story.append(Paragraph("Reporte Estadístico de Denuncias", est_titulo))
     story.append(Spacer(1, 0.4 * cm))
     fecha_gen = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -102,7 +125,7 @@ def generar_reporte(
 
     t = Table(datos_tabla, colWidths=[8 * cm, 8 * cm])
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), AZUL),
+        ("BACKGROUND", (0, 0), (-1, 0), PRIMARIO),
         ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
         ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE",   (0, 0), (-1, 0), 9),
@@ -128,7 +151,7 @@ def generar_reporte(
         ancho_col = (ANCHO - 2 * MARGEN) / n_cols
         tp = Table(datos_p, colWidths=[ancho_col] * n_cols)
         tp.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), AZUL),
+            ("BACKGROUND", (0, 0), (-1, 0), PRIMARIO),
             ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
             ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE",   (0, 0), (-1, -1), 7),
@@ -138,8 +161,8 @@ def generar_reporte(
             ("RIGHTPADDING", (0, 0), (-1, -1), 4),
             ("TOPPADDING",   (0, 0), (-1, -1), 3),
             ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
-            ("BACKGROUND", (-1, 0), (-1, -1), colors.HexColor("#AFA9EC")),
-            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#AFA9EC")),
+            ("BACKGROUND", (-1, 0), (-1, -1), ACENTO),
+            ("BACKGROUND", (0, -1), (-1, -1), ACENTO),
             ("FONTNAME",   (-1, 0), (-1, -1), "Helvetica-Bold"),
             ("FONTNAME",   (0, -1), (-1, -1), "Helvetica-Bold"),
         ]))
@@ -168,6 +191,6 @@ def generar_reporte(
         img = Image(ruta, width=img_ancho, height=img_ancho * 0.48)
         story.append(img)
 
-    doc.build(story)
+    doc.build(story, onFirstPage=_membrete, onLaterPages=_membrete)
     return ruta_pdf
 

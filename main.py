@@ -1,5 +1,5 @@
 """
-main.py — Interfaz gráfica del Analizador Delictual (Flet).
+main.py — Interfaz gráfica de Vistana (Flet).
 Es el punto de entrada de la aplicación de escritorio.
 Ejecutar con:
     python main.py
@@ -25,6 +25,7 @@ from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_piv
 from modulos.graficos import generar_todos
 from modulos.exportador import generar_reporte, nombre_reporte
 from modulos.mapa import generar_mapa_html, puntos_validos
+from modulos.marca import ICONO_VENTANA, LEMA, LOGO, NOMBRE_VISIBLE
 from modulos.rutas import carpeta_documentos, carpeta_logs, ruta_mapa
 
 
@@ -61,22 +62,38 @@ def configurar_registro():
 # ─── Paleta de colores moderna ────────────────────────────────────────────────
 C = {
     "bg": "#F8FAFC",          # Fondo principal gris frío muy claro
-    "sidebar": "#1E1E2E",     # Lateral oscuro moderno (estilo Slate/Catppuccin)
+    "sidebar": "#4A4A4A",     # Lateral gris oscuro (color de marca)
     "panel": "#FFFFFF",       # Tarjetas y paneles blancos
-    "primary": "#534AB7",     # Color primario (Azul/Púrpura)
-    "primary_light": "#EEEDFE",
-    "teal": "#1D9E75",
-    "coral": "#D85A30",
+    "primary": "#DC143C",     # Color primario (carmesí de marca): fondos con texto blanco
+    "primary_light": "#FFD9CC",
+    "coral": "#FF7F50",       # Acento (coral de marca): no usar de fondo con texto blanco
     "texto": "#1E293B",
     "muted": "#64748B",
     "borde": "#E2E8F0",
 }
 
 
+def _logo(tamano: int):
+    """Logo de la app sobre fondo blanco; si falta el archivo, un ícono genérico."""
+    try:
+        contenido = ft.Image(src=LOGO.read_bytes(), width=tamano, height=tamano, fit=ft.BoxFit.CONTAIN)
+    except OSError:
+        return ft.Icon(ft.Icons.SHIELD_OUTLINED, color=C["coral"], size=tamano)
+    # El logo tiene trazos grises que se pierden sobre el lateral oscuro
+    return ft.Container(
+        content=contenido,
+        bgcolor="white",
+        padding=4,
+        border_radius=ft.BorderRadius.all(12),
+    )
+
+
 class AnalizadorApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.page.title = "Analizador Delictual — Sistema de Análisis de Denuncias"
+        self.page.title = f"{NOMBRE_VISIBLE} — {LEMA}"
+        if ICONO_VENTANA.is_file():
+            self.page.window.icon = str(ICONO_VENTANA)
         self.page.window.width = 1150
         self.page.window.height = 750
         self.page.bgcolor = C["bg"]
@@ -105,21 +122,21 @@ class AnalizadorApp:
                     ft.Container(
                         content=ft.Column(
                             controls=[
-                                ft.Icon(ft.Icons.SHIELD_OUTLINED, color="white", size=32),
-                                ft.Text("Analizador\nDelictual", color="white", size=18, weight=ft.FontWeight.BOLD),
+                                _logo(72),
+                                ft.Text(NOMBRE_VISIBLE, color="white", size=20, weight=ft.FontWeight.BOLD),
                             ],
                             spacing=6,
                         ),
                         margin=ft.Margin.only(bottom=10, top=10),
                     ),
-                    ft.Divider(color="#333344"),
+                    ft.Divider(color="#636363"),
                     self._btn_sidebar(ft.Icons.FOLDER_OPEN_ROUNDED, "Cargar archivo", self._cargar_archivo),
                     self._btn_sidebar(ft.Icons.FILTER_ALT_ROUNDED, "Aplicar filtros", self._abrir_filtros),
                     self._btn_sidebar(ft.Icons.BAR_CHART_ROUNDED, "Generar gráficos", self._generar_graficos),
                     self._btn_sidebar(ft.Icons.PICTURE_AS_PDF_ROUNDED, "Exportar PDF", self._exportar_pdf),
                     self._btn_sidebar(ft.Icons.TABLE_VIEW_ROUNDED, "Exportar Excel", self._exportar_excel),
                     self._btn_sidebar(ft.Icons.DELETE_SWEEP_ROUNDED, "Limpiar datos", self._limpiar_datos),
-                    ft.Divider(color="#333344"),
+                    ft.Divider(color="#636363"),
                     self._btn_sidebar(ft.Icons.INFO_OUTLINED, "Acerca de", self._acerca_de, secundario=True),
                 ],
                 spacing=8,
@@ -127,7 +144,7 @@ class AnalizadorApp:
         )
 
         # 2. HEADER
-        self.lbl_archivo = ft.Text("Sin archivo cargado", color="#AFA9EC", size=12)
+        self.lbl_archivo = ft.Text("Sin archivo cargado", color=C["primary_light"], size=12)
         header = ft.Container(
             height=55,
             bgcolor=C["primary"],
@@ -135,7 +152,7 @@ class AnalizadorApp:
             content=ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
-                    ft.Text("Sistema de Análisis de Denuncias Delictuales", color="white", size=15, weight=ft.FontWeight.BOLD),
+                    ft.Text(LEMA, color="white", size=15, weight=ft.FontWeight.BOLD),
                     self.lbl_archivo,
                 ],
             ),
@@ -554,7 +571,7 @@ class AnalizadorApp:
             actions=[
                 ft.Button(
                     content="Limpiar",
-                    style=ft.ButtonStyle(bgcolor=C["coral"], color="white"),
+                    style=ft.ButtonStyle(bgcolor=C["primary"], color="white"),
                     on_click=confirmar,
                 ),
                 ft.OutlinedButton(content="Cancelar", on_click=lambda ev: self.page.pop_dialog()),
@@ -588,7 +605,7 @@ class AnalizadorApp:
     def _acerca_de(self, e=None):
         self._mostrar_alerta(
             "Acerca de",
-            "Analizador Delictual v1.1\n\n"
+            f"{NOMBRE_VISIBLE} v1.1 — {LEMA}\n\n"
             "Sistema de análisis estadístico de denuncias.\n"
             "Desarrollado con Python · Flet · pandas · matplotlib · seaborn\n\n"
             "Proyecto anual — Prácticas Profesionalizantes",
@@ -644,10 +661,10 @@ class AnalizadorApp:
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=16,
                 controls=[
-                    ft.Icon(ft.Icons.MAP, size=48, color=C["teal"]),
+                    ft.Icon(ft.Icons.MAP, size=48, color=C["coral"]),
                     ft.Text(
                         f"Mapa listo con {n:,} puntos georreferenciados.",
-                        color=C["teal"],
+                        color=C["coral"],
                         size=14,
                         weight=ft.FontWeight.BOLD,
                     ),

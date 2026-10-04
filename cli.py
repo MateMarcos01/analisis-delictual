@@ -26,7 +26,7 @@ def main():
     logging.basicConfig(level=logging.WARNING, format="   ! %(message)s")
 
     parser = argparse.ArgumentParser(
-        description="Analizador Delictual — modo terminal"
+        description="Vistana — modo terminal"
     )
     parser.add_argument("--archivo",      required=True, help="Ruta al .xlsx o .csv")
     parser.add_argument("--anio",         type=int,      help="Filtrar por año")
