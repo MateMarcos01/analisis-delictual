@@ -8,7 +8,7 @@ import pytest
 
 import cli
 import main
-from modulos import graficos
+from modulos import graficos, rutas
 from modulos.graficos import generar_todos
 from modulos.mapa import generar_mapa_html
 from modulos.procesador import _limpiar
@@ -63,6 +63,38 @@ def test_el_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path, car
 
     assert app.alertas == ["PDF Exportado"]
     assert destino.with_suffix(".pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_el_pdf_conserva_los_puntos_del_nombre(app, monkeypatch, tmp_path):
+    app.rutas_graficos = generar_todos(app.df_filtrado)
+    _elegir_destino(monkeypatch, str(tmp_path / "informe v1.2"))
+    asyncio.run(app._exportar_pdf())
+    assert (tmp_path / "informe v1.2.pdf").exists()
+    assert not (tmp_path / "informe v1.pdf").exists()
+
+
+def test_no_pisa_un_pdf_que_el_dialogo_no_confirmo(app, monkeypatch, tmp_path):
+    existente = tmp_path / "informe.pdf"
+    existente.write_bytes(b"otro reporte")
+    _elegir_destino(monkeypatch, str(tmp_path / "informe"))
+    asyncio.run(app._exportar_pdf())
+    assert app.alertas == ["El archivo ya existe"]
+    assert existente.read_bytes() == b"otro reporte"
+
+
+def test_la_carpeta_de_trabajo_siempre_es_absoluta(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(rutas.VARIABLE_CARPETA, "portable datos")
+    assert rutas.ruta_mapa() == tmp_path / "portable datos" / "mapa.html"
+    assert rutas.carpeta_documentos().is_dir()
+
+
+def test_la_app_abre_aunque_no_se_pueda_crear_el_registro(monkeypatch, tmp_path):
+    estorbo = tmp_path / "es_un_archivo"
+    estorbo.write_text("x")
+    monkeypatch.setenv(rutas.VARIABLE_CARPETA, str(estorbo))
+    monkeypatch.setattr(main.logging, "basicConfig", lambda **kw: None)
+    main.configurar_registro()   # no debe lanzar
 
 
 def test_cancelar_el_dialogo_no_exporta(app, monkeypatch):

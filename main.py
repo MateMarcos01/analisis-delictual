@@ -46,10 +46,15 @@ class _LogEnPantalla(logging.Handler):
 
 def configurar_registro():
     """Guarda avisos y errores en un archivo: la app instalada no tiene consola."""
-    archivo = RotatingFileHandler(
-        carpeta_logs() / "analizador.log",
-        maxBytes=1_000_000, backupCount=3, encoding="utf-8",
-    )
+    try:
+        archivo = RotatingFileHandler(
+            carpeta_logs() / "analizador.log",
+            maxBytes=1_000_000, backupCount=3, encoding="utf-8",
+        )
+    except OSError:
+        # Sin registro en archivo la app tiene que abrir igual
+        logging.basicConfig(level=logging.INFO, handlers=[logging.NullHandler()])
+        return
     archivo.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[archivo])
 
@@ -474,7 +479,15 @@ class AnalizadorApp:
         )
         if not ruta:
             return
-        ruta = Path(ruta).with_suffix(".pdf")
+        elegida = Path(ruta)
+        ruta = elegida
+        if ruta.suffix.lower() != ".pdf":
+            # Se agrega la extensión sin tocar el nombre ("informe v1.2" → "informe v1.2.pdf")
+            ruta = ruta.with_name(ruta.name + ".pdf")
+            if ruta.exists():
+                # El diálogo confirmó sobrescribir "elegida", no este otro archivo
+                self._mostrar_alerta("El archivo ya existe", f"Ya existe {ruta.name} en esa carpeta. Elegí otro nombre.")
+                return
 
         # Mientras el diálogo estuvo abierto pudieron cambiar los datos o los gráficos
         if self._generando or df is not self.df_filtrado or rutas != self.rutas_graficos:
