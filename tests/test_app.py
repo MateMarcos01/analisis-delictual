@@ -1,5 +1,6 @@
 """Tests del estado de la interfaz (main.py) y del modo terminal (cli.py), sin abrir ventana."""
 import asyncio
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -217,7 +218,7 @@ def test_el_mapa_se_guarda_en_la_carpeta_de_trabajo(carpeta_de_trabajo):
     assert ruta.stat().st_size > 0
 
 
-def test_las_capas_del_mapa_son_los_delitos_y_no_las_caratulas(tmp_path):
+def test_el_panel_del_mapa_filtra_por_delito_y_no_por_caratula(tmp_path):
     df = _limpiar(pd.DataFrame([
         {"legajo": i, "fecha": "4/3/2025", "hora": "10:00", "jurisdiccion": "COMISARIA 13°",
          "tipo_delito": caratula, "DELITO": delito, "latitud": -31.53, "longitud": -68.53}
@@ -230,11 +231,17 @@ def test_las_capas_del_mapa_son_los_delitos_y_no_las_caratulas(tmp_path):
     assert tipos_disponibles(df) == ["Robo", "Hurto", "Ttva Robo", "Otros"]
 
     contenido = generar_mapa_html(df, ruta=tmp_path / "mapa.html").read_text(encoding="utf-8")
-    capas = contenido[contenido.index("overlays"):]
-    assert '"Robo"' in capas and '"Otros"' in capas
-    assert "Robo Agravado" not in capas and "Abigeato" not in capas
-    assert "tile.openstreetmap.fr" not in capas          # el mapa base no es una opción
+    assert "'Mapa de puntos'" in contenido and "'Mapa de calor'" in contenido
+    assert "L.control.layers" not in contenido           # el panel reemplaza al control de capas
+    inicio = contenido.index("var delitos = ")
+    delitos = contenido[inicio:contenido.index("\n", inicio)]
+    assert [delitos.index(f'"{d}"') for d in ("Robo", "Hurto", "Ttva Robo", "Otros")] == sorted(
+        delitos.index(f'"{d}"') for d in ("Robo", "Hurto", "Ttva Robo", "Otros")
+    )
+    assert "Robo Agravado" not in delitos and "Abigeato" not in delitos
     assert "Car\\u00e1tula" in contenido or "Carátula" in contenido   # el detalle va en el globo
+    # Nada se dibuja al abrir: las capas las prende el usuario desde el panel
+    assert not re.search(r"(feature_group_sub_group|heat_map)_\w+\.addTo\(", contenido)
 
 
 # ─── Modo terminal ────────────────────────────────────────────────────────────
