@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+.continue/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Salidas generadas (contienen datos de denuncias)
+salidas/
+
+# Cache files
+.cache_*
+*.pkl
+*.cache
+
+# Datos: nunca se versionan archivos de denuncias reales
+datos/*.xlsx
+datos/*.xls
+datos/*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment variables
+.env
+.env.local
+*.~lock.*
