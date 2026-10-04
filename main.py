@@ -25,7 +25,7 @@ from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_piv
 from modulos.graficos import generar_todos
 from modulos.exportador import generar_reporte, nombre_reporte
 from modulos.mapa import generar_mapa_html, puntos_validos
-from modulos.rutas import carpeta_documentos, carpeta_logs
+from modulos.rutas import carpeta_documentos, carpeta_logs, ruta_mapa
 
 
 class _LogEnPantalla(logging.Handler):
@@ -118,6 +118,7 @@ class AnalizadorApp:
                     self._btn_sidebar(ft.Icons.BAR_CHART_ROUNDED, "Generar gráficos", self._generar_graficos),
                     self._btn_sidebar(ft.Icons.PICTURE_AS_PDF_ROUNDED, "Exportar PDF", self._exportar_pdf),
                     self._btn_sidebar(ft.Icons.TABLE_VIEW_ROUNDED, "Exportar Excel", self._exportar_excel),
+                    self._btn_sidebar(ft.Icons.DELETE_SWEEP_ROUNDED, "Limpiar datos", self._limpiar_datos),
                     ft.Divider(color="#333344"),
                     self._btn_sidebar(ft.Icons.INFO_OUTLINED, "Acerca de", self._acerca_de, secundario=True),
                 ],
@@ -193,17 +194,11 @@ class AnalizadorApp:
             expand=True,
             alignment=ft.MainAxisAlignment.CENTER,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                ft.Text("Generá los gráficos para visualizarlos aquí.", color=C["muted"], size=13)
-            ],
         )
 
         # Tab 4: Mapa
-        self.container_mapa = ft.Container(
-            alignment=ft.Alignment.CENTER,
-            expand=True,
-            content=ft.Text("Carga un archivo con coordenadas para ver el mapa.", color=C["muted"], size=13),
-        )
+        self.container_mapa = ft.Container(alignment=ft.Alignment.CENTER, expand=True)
+        self._vaciar_pestanas()
 
         # En Flet nuevo: Tabs = TabBar (las pestañas) + TabBarView (los contenidos)
         tabs = ft.Tabs(
@@ -538,6 +533,58 @@ class AnalizadorApp:
         except Exception as ex:
             self._mostrar_alerta("Error Excel", str(ex))
 
+    def _limpiar_datos(self, e=None):
+        if self.df_original is None:
+            self._mostrar_alerta("Sin datos", "No hay ningún archivo cargado.")
+            return
+        if self._generando:
+            self._mostrar_alerta("Gráficos en curso", "Esperá a que terminen de generarse los gráficos.")
+            return
+
+        def confirmar(ev):
+            self.page.pop_dialog()
+            self.limpiar_datos()
+
+        dlg = ft.AlertDialog(
+            title=ft.Text("Limpiar datos", weight=ft.FontWeight.BOLD),
+            content=ft.Text(
+                f"Se va a quitar {self.lbl_archivo.value} junto con sus filtros, gráficos y mapa.\n"
+                "Los PDF y Excel que ya exportaste no se tocan."
+            ),
+            actions=[
+                ft.Button(
+                    content="Limpiar",
+                    style=ft.ButtonStyle(bgcolor=C["coral"], color="white"),
+                    on_click=confirmar,
+                ),
+                ft.OutlinedButton(content="Cancelar", on_click=lambda ev: self.page.pop_dialog()),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self.page.show_dialog(dlg)
+
+    def limpiar_datos(self):
+        """Deja la aplicación como recién abierta, lista para cargar otro archivo."""
+        # Los archivos de trabajo contienen datos de las denuncias: no deben quedar en disco
+        for ruta in [*self.rutas_graficos.values(), ruta_mapa()]:
+            try:
+                Path(ruta).unlink(missing_ok=True)
+            except OSError as ex:
+                logging.getLogger(__name__).warning("No se pudo borrar %s: %s", ruta, ex)
+
+        self.df_original = None
+        self.df_filtrado = None
+        self.filtros_activos = {}
+        self.rutas_graficos = {}
+
+        self.lbl_archivo.value = "Sin archivo cargado"
+        for tarjeta in self.tarjetas.values():
+            tarjeta.value = "—"
+        self._vaciar_pestanas()
+
+        self._log("✓ Datos limpiados. Podés cargar otro archivo.")
+        self._estado("Listo.")
+
     def _acerca_de(self, e=None):
         self._mostrar_alerta(
             "Acerca de",
@@ -548,6 +595,16 @@ class AnalizadorApp:
         )
 
     # ─── HELPERS DE UI Y ACTUALIZACIÓN ────────────────────────────────────────
+
+    def _vaciar_pestanas(self):
+        """Tabla, gráficos y mapa como cuando todavía no hay archivo cargado."""
+        self.container_tabla.controls = []
+        self.col_graficos.controls = [
+            ft.Text("Generá los gráficos para visualizarlos aquí.", color=C["muted"], size=13)
+        ]
+        self.container_mapa.content = ft.Text(
+            "Carga un archivo con coordenadas para ver el mapa.", color=C["muted"], size=13
+        )
 
     def _actualizar_metricas(self, df):
         r = resumen_general(df)

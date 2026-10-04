@@ -168,6 +168,46 @@ def test_graficos_de_datos_que_ya_cambiaron_se_descartan(app, monkeypatch, tmp_p
     assert app._generando is False
 
 
+def test_limpiar_deja_la_app_como_recien_abierta(app):
+    app.rutas_graficos = generar_todos(app.df_filtrado)
+    graficos_en_disco = [Path(r) for r in app.rutas_graficos.values()]
+    df = app.df_filtrado.assign(latitud=-31.53, longitud=-68.53)
+    mapa = generar_mapa_html(df)
+    app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"]})
+    app.rutas_graficos = {g.stem: str(g) for g in graficos_en_disco}
+    app.lbl_archivo.value = "denuncias.xlsx"
+
+    app.limpiar_datos()
+
+    assert app.df_original is None and app.df_filtrado is None
+    assert app.filtros_activos == {} and app.rutas_graficos == {}
+    assert app.lbl_archivo.value == "Sin archivo cargado"
+    assert {t.value for t in app.tarjetas.values()} == {"—"}
+    assert app.container_tabla.controls == []
+    assert not mapa.exists()
+    assert not any(g.exists() for g in graficos_en_disco)
+
+    asyncio.run(app._exportar_pdf())
+    assert app.alertas == ["Sin gráficos"]
+
+
+def test_limpiar_pide_confirmacion_y_no_toca_nada_hasta_aceptar(app):
+    app._limpiar_datos()
+    app.page.show_dialog.assert_called_once()
+    assert app.df_original is not None
+    assert app.rutas_graficos == {"donut": "donut.png"}
+
+
+def test_limpiar_sin_archivo_o_con_graficos_en_curso_solo_avisa(app):
+    app._generando = True
+    app._limpiar_datos()
+    app._generando = False
+    app.df_original = None
+    app._limpiar_datos()
+    assert app.alertas == ["Gráficos en curso", "Sin datos"]
+    app.page.show_dialog.assert_not_called()
+
+
 def test_el_mapa_se_guarda_en_la_carpeta_de_trabajo(carpeta_de_trabajo):
     df = _datos()
     df["latitud"] = -31.53

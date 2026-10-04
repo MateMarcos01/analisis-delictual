@@ -15,6 +15,7 @@ Proyecto anual — Prácticas Profesionalizantes.
 - Filtros por año, jurisdicción y delito
 - Exportación a **PDF** con reporte completo
 - Exportación a **Excel** con datos filtrados + tabla pivot
+- Botón **Limpiar datos** para quitar el archivo cargado y empezar con otro
 - Interfaz gráfica de escritorio (**Flet**)
 - Modo terminal sin interfaz
 
