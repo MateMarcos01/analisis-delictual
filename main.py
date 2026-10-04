@@ -5,9 +5,11 @@ Ejecutar con:
     python main.py
 """
 import asyncio
+import logging
 import threading
 import webbrowser
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import flet as ft
@@ -21,8 +23,35 @@ matplotlib.use("Agg")
 # Importar módulos propios (Lógica de negocio intacta)
 from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_pivot
 from modulos.graficos import generar_todos
-from modulos.exportador import generar_reporte
+from modulos.exportador import generar_reporte, nombre_reporte
 from modulos.mapa import generar_mapa_html, puntos_validos
+from modulos.rutas import carpeta_documentos, carpeta_logs
+
+
+class _LogEnPantalla(logging.Handler):
+    """Lleva a la pestaña Actividad los errores que los módulos registran
+    (por ejemplo, un gráfico que no se pudo generar)."""
+
+    def __init__(self, escribir):
+        super().__init__(level=logging.ERROR)
+        self._escribir = escribir
+
+    def emit(self, record):
+        try:
+            detalle = f": {record.exc_info[1]}" if record.exc_info else ""
+            self._escribir(f"✗ {record.getMessage()}{detalle}")
+        except Exception:
+            self.handleError(record)
+
+
+def configurar_registro():
+    """Guarda avisos y errores en un archivo: la app instalada no tiene consola."""
+    archivo = RotatingFileHandler(
+        carpeta_logs() / "analizador.log",
+        maxBytes=1_000_000, backupCount=3, encoding="utf-8",
+    )
+    archivo.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[archivo])
 
 # ─── Paleta de colores moderna ────────────────────────────────────────────────
 C = {
@@ -57,6 +86,7 @@ class AnalizadorApp:
         self._generando = False
 
         self._construir_ui()
+        logging.getLogger("modulos").addHandler(_LogEnPantalla(self._log))
 
     # ─── Construcción de la UI ────────────────────────────────────────────────
     def _construir_ui(self):
@@ -411,10 +441,10 @@ class AnalizadorApp:
                     return
                 self.rutas_graficos = rutas
 
-                self._log(f"✓ {len(self.rutas_graficos)} gráficos guardados en salidas/graficos/")
+                self._log(f"✓ {len(self.rutas_graficos)} gráficos generados.")
                 self._estado(f"{len(self.rutas_graficos)} gráficos generados.")
                 self._mostrar_graficos_en_ui()
-                self._mostrar_alerta("Gráficos", f"Se generaron {len(self.rutas_graficos)} gráficos en salidas/graficos/")
+                self._mostrar_alerta("Gráficos", f"Se generaron {len(self.rutas_graficos)} gráficos. Están en la pestaña Gráficos.")
             except Exception as ex:
                 self._log(f"✗ Error: {ex}")
                 self._mostrar_alerta("Error", str(ex))
@@ -423,7 +453,7 @@ class AnalizadorApp:
 
         threading.Thread(target=tarea, daemon=True).start()
 
-    def _exportar_pdf(self, e=None):
+    async def _exportar_pdf(self, e=None):
         if self._generando:
             self._mostrar_alerta("Gráficos en curso", "Esperá a que terminen de generarse los gráficos.")
             return
@@ -431,25 +461,41 @@ class AnalizadorApp:
             self._mostrar_alerta("Sin gráficos", "Generá los gráficos primero.")
             return
 
-        self._estado("Generando PDF…")
         # Se toman juntos para que el resumen y los gráficos sean de los mismos datos
         df = self.df_filtrado
         rutas = dict(self.rutas_graficos)
 
-        def tarea():
-            try:
-                resumen = resumen_general(df)
-                pivot = tabla_pivot(df)
-                ruta_pdf = generar_reporte(resumen, rutas, pivot)
+        ruta = await ft.FilePicker().save_file(
+            dialog_title="Guardar reporte PDF como…",
+            file_name=nombre_reporte(),
+            initial_directory=str(carpeta_documentos()),
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["pdf"],
+        )
+        if not ruta:
+            return
+        ruta = Path(ruta).with_suffix(".pdf")
 
-                self._log(f"✓ PDF generado: {ruta_pdf}")
-                self._estado("PDF exportado correctamente.")
-                self._mostrar_alerta("PDF Exportado", f"Reporte guardado en:\n{ruta_pdf}")
-            except Exception as ex:
-                self._log(f"✗ Error PDF: {ex}")
-                self._mostrar_alerta("Error PDF", str(ex))
+        # Mientras el diálogo estuvo abierto pudieron cambiar los datos o los gráficos
+        if self._generando or df is not self.df_filtrado or rutas != self.rutas_graficos:
+            self._mostrar_alerta("Los datos cambiaron", "Generá los gráficos de nuevo antes de exportar.")
+            return
 
-        threading.Thread(target=tarea, daemon=True).start()
+        self._estado("Generando PDF…")
+        try:
+            ruta_pdf = await asyncio.to_thread(
+                lambda: generar_reporte(
+                    resumen_general(df), rutas, tabla_pivot(df),
+                    carpeta=ruta.parent, nombre=ruta.name,
+                )
+            )
+            self._log(f"✓ PDF generado: {ruta_pdf}")
+            self._estado("PDF exportado correctamente.")
+            self._mostrar_alerta("PDF Exportado", f"Reporte guardado en:\n{ruta_pdf}")
+        except Exception as ex:
+            self._log(f"✗ Error PDF: {ex}")
+            self._estado("Error al exportar el PDF.")
+            self._mostrar_alerta("Error PDF", str(ex))
 
     async def _exportar_excel(self, e=None):
         if self.df_filtrado is None:
@@ -650,4 +696,5 @@ class AnalizadorApp:
 
 # ─── PUNTO DE ENTRADA DE LA APLICACIÓN ────────────────────────────────────────
 if __name__ == "__main__":
+    configurar_registro()
     ft.run(AnalizadorApp)

@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 import folium
 from modulos.graficos import _color_delito
+from modulos.rutas import ruta_mapa
 from folium.plugins import FeatureGroupSubGroup, HeatMap, MarkerCluster
 
 logger = logging.getLogger(__name__)
@@ -17,8 +18,6 @@ LAT_CENTRO = -31.5375
 LON_CENTRO = -68.5364
 ZOOM_INICIAL = 15
 
-# Ruta de salida: <raíz del proyecto>/salidas/mapa.html
-RUTA_SALIDA = Path(__file__).resolve().parent.parent / "salidas" / "mapa.html"
 # Degradado del calor: mismos tonos que la matriz de riesgo
 GRADIENTE_CALOR = {
     0.25: "#97B955",   # verde
@@ -127,8 +126,9 @@ def _leyenda_html(tipos):
     </div>"""
 
 
-def generar_mapa_html(df, tipos=None, calor=False) -> Path:
+def generar_mapa_html(df, tipos=None, calor=False, ruta=None) -> Path:
     """Genera el HTML del mapa y devuelve la ruta (Path).
+    Sin 'ruta', se guarda en la carpeta de trabajo de la aplicación.
 
     tipos: lista de tipos de delito a dibujar. None = todos, [] = ninguno.
     calor: True agrega la capa de mapa de calor con los puntos mostrados.
@@ -196,7 +196,8 @@ def generar_mapa_html(df, tipos=None, calor=False) -> Path:
         mapa.get_root().html.add_child(folium.Element(_leyenda_html(tipos_sel)))
         folium.LayerControl(collapsed=False).add_to(mapa)
 
-    RUTA_SALIDA.parent.mkdir(parents=True, exist_ok=True)
-    mapa.save(str(RUTA_SALIDA))
+    ruta = Path(ruta).resolve() if ruta else ruta_mapa()
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    mapa.save(str(ruta))
     logger.info("%d puntos cargados en el mapa.", len(puntos))
-    return RUTA_SALIDA
+    return ruta

@@ -42,6 +42,11 @@ def _estilos():
     return titulo, subtitulo, normal
 
 
+def nombre_reporte() -> str:
+    """Nombre de archivo sugerido para un reporte nuevo."""
+    return f"reporte_delictual_{datetime.now():%Y%m%d_%H%M%S}.pdf"
+
+
 def generar_reporte(
     resumen: dict,
     rutas_graficos: dict,
@@ -56,11 +61,11 @@ def generar_reporte(
     rutas_graficos : dict {nombre: ruta_imagen}
     tabla_pivot    : DataFrame opcional para incluir como tabla
     """
-    Path(carpeta).mkdir(parents=True, exist_ok=True)
+    carpeta = Path(carpeta).resolve()
+    carpeta.mkdir(parents=True, exist_ok=True)
     if not nombre:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre = f"reporte_delictual_{ts}.pdf"
-    ruta_pdf = str(Path(carpeta) / nombre)
+        nombre = nombre_reporte()
+    ruta_pdf = str(carpeta / nombre)
 
     doc = SimpleDocTemplate(
         ruta_pdf,

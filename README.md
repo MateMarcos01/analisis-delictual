@@ -90,18 +90,21 @@ analizador-delictual/
 │   ├── procesador.py                # Carga, limpieza, filtros y resúmenes
 │   ├── graficos.py                  # Gráficos (matplotlib)
 │   ├── mapa.py                      # Mapa interactivo (folium)
+│   ├── rutas.py                     # Carpetas donde escribe la aplicación
 │   └── exportador.py                # Generación de PDF (reportlab)
 │
 ├── datos/
 │   └── generar_datos_ejemplo.py     # Script para crear datos de prueba
 │
-├── tests/                           # Tests automáticos (pytest)
-│
-└── salidas/                         # Se crea al usar la aplicación
-    ├── graficos/                    # PNGs generados
-    ├── reportes/                    # PDFs generados
-    └── mapa.html                    # Mapa interactivo
+└── tests/                           # Tests automáticos (pytest)
 ```
+
+### Dónde se guardan los archivos
+
+- **PDF y Excel exportados**: donde el usuario elige en el diálogo "Guardar como".
+- **Archivos de trabajo de la interfaz** (gráficos, mapa y registro de errores):
+  `%LOCALAPPDATA%\AnalizadorDelictual`. Contienen datos de las denuncias cargadas.
+- **Modo terminal**: carpeta `salidas\` del directorio actual, o la indicada con `--salida`.
 
 ---
 

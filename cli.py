@@ -11,6 +11,7 @@ Uso:
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_pivot
 from modulos.graficos   import generar_todos
@@ -32,6 +33,7 @@ def main():
     parser.add_argument("--jurisdiccion", nargs="+",     help="Una o más jurisdicciones")
     parser.add_argument("--tipo_delito",  nargs="+",     help="Uno o más tipos de delito")
     parser.add_argument("--sin_pdf",      action="store_true", help="No generar PDF")
+    parser.add_argument("--salida",       default="salidas",   help="Carpeta de salida (por defecto: salidas)")
     args = parser.parse_args()
 
     print("\n══════════════════════════════════════════")
@@ -81,13 +83,14 @@ def main():
 
     # 4. Gráficos
     print("▶  Generando gráficos…")
-    rutas = generar_todos(df)
-    print(f"   {len(rutas)} gráficos guardados en salidas/graficos/\n")
+    salida = Path(args.salida)
+    rutas = generar_todos(df, carpeta=salida / "graficos")
+    print(f"   {len(rutas)} gráficos guardados en {salida / 'graficos'}\n")
 
     # 5. PDF
     if not args.sin_pdf:
         print("▶  Generando reporte PDF…")
-        ruta_pdf = generar_reporte(resumen, rutas, pivot)
+        ruta_pdf = generar_reporte(resumen, rutas, pivot, carpeta=salida / "reportes")
         print(f"   PDF: {ruta_pdf}\n")
 
     print("✓  Proceso completado.\n")

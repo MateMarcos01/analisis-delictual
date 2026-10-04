@@ -16,6 +16,8 @@ from pathlib import Path
 from matplotlib.patches import FancyBboxPatch
 from matplotlib.colors import LinearSegmentedColormap
 
+from modulos.rutas import carpeta_graficos
+
 logger = logging.getLogger(__name__)
 _CANDADO = threading.Lock()
 
@@ -57,8 +59,9 @@ def _estilo():
 
 def _guardar(fig, carpeta: str, nombre: str) -> str:
     """Guarda la figura y devuelve la ruta."""
-    Path(carpeta).mkdir(parents=True, exist_ok=True)
-    ruta = str(Path(carpeta) / nombre)
+    carpeta = Path(carpeta).resolve()
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta = str(carpeta / nombre)
     fig.savefig(ruta, bbox_inches="tight", dpi=150)
     return ruta, fig
 
@@ -418,8 +421,11 @@ def grafico_comparacion_anual(df: pd.DataFrame,
 
 # ─── Generar todos de una vez ─────────────────────────────────────────────────
 
-def generar_todos(df: pd.DataFrame, carpeta="salidas/graficos") -> dict:
-    """Genera todos los gráficos y devuelve {nombre: ruta_png}."""
+def generar_todos(df: pd.DataFrame, carpeta=None) -> dict:
+    """Genera todos los gráficos y devuelve {nombre: ruta_png} con rutas absolutas.
+    Sin 'carpeta', se guardan en la carpeta de trabajo de la aplicación."""
+    if carpeta is None:
+        carpeta = carpeta_graficos()
     # pyplot guarda estado global y los archivos tienen nombre fijo:
     # dos generaciones a la vez se pisarían entre sí.
     with _CANDADO:

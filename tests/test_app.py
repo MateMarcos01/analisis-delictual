@@ -1,4 +1,6 @@
 """Tests del estado de la interfaz (main.py) y del modo terminal (cli.py), sin abrir ventana."""
+import asyncio
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -6,6 +8,9 @@ import pytest
 
 import cli
 import main
+from modulos import graficos
+from modulos.graficos import generar_todos
+from modulos.mapa import generar_mapa_html
 from modulos.procesador import _limpiar
 
 
@@ -35,8 +40,56 @@ def test_filtrar_invalida_los_graficos_anteriores(app):
     assert app.rutas_graficos == {}
     assert app.tarjetas["total_denuncias"].value == "5"
 
-    app._exportar_pdf()
+    asyncio.run(app._exportar_pdf())
     assert app.alertas == ["Sin gráficos"]
+
+
+def _elegir_destino(monkeypatch, ruta, al_elegir=None):
+    """Simula el diálogo 'Guardar como' devolviendo 'ruta'."""
+    async def save_file(self, **kwargs):
+        if al_elegir:
+            al_elegir()
+        return ruta
+    monkeypatch.setattr(main.ft.FilePicker, "save_file", save_file)
+
+
+def test_el_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path, carpeta_de_trabajo):
+    app.rutas_graficos = generar_todos(app.df_filtrado)
+    assert all(Path(r).is_relative_to(carpeta_de_trabajo) for r in app.rutas_graficos.values())
+
+    destino = tmp_path / "mis reportes" / "informe"       # sin extensión
+    _elegir_destino(monkeypatch, str(destino))
+    asyncio.run(app._exportar_pdf())
+
+    assert app.alertas == ["PDF Exportado"]
+    assert destino.with_suffix(".pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_cancelar_el_dialogo_no_exporta(app, monkeypatch):
+    _elegir_destino(monkeypatch, None)
+    asyncio.run(app._exportar_pdf())
+    assert app.alertas == []
+
+
+def test_si_los_datos_cambian_con_el_dialogo_abierto_no_se_exporta(app, monkeypatch, tmp_path):
+    destino = tmp_path / "informe.pdf"
+    _elegir_destino(monkeypatch, str(destino),
+                    al_elegir=lambda: app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"]}))
+    asyncio.run(app._exportar_pdf())
+    assert app.alertas == ["Los datos cambiaron"]
+    assert not destino.exists()
+
+
+def test_un_grafico_que_falla_se_informa_en_actividad(app, monkeypatch, tmp_path):
+    def roto(df, carpeta):
+        raise RuntimeError("sin datos de hora")
+    monkeypatch.setattr(graficos, "grafico_heatmap_horario", roto)
+
+    rutas = generar_todos(app.df_filtrado, carpeta=tmp_path)
+
+    assert "heatmap_horario" not in rutas and len(rutas) == 5
+    assert "heatmap_horario" in app.txt_log.value
+    assert "sin datos de hora" in app.txt_log.value
 
 
 def test_filtro_sin_resultados_no_cambia_el_estado(app):
@@ -81,6 +134,15 @@ def test_graficos_de_datos_que_ya_cambiaron_se_descartan(app, monkeypatch, tmp_p
 
     assert app.rutas_graficos == {}
     assert app._generando is False
+
+
+def test_el_mapa_se_guarda_en_la_carpeta_de_trabajo(carpeta_de_trabajo):
+    df = _datos()
+    df["latitud"] = -31.53
+    df["longitud"] = -68.53
+    ruta = generar_mapa_html(df)
+    assert ruta == carpeta_de_trabajo / "mapa.html"
+    assert ruta.stat().st_size > 0
 
 
 # ─── Modo terminal ────────────────────────────────────────────────────────────
