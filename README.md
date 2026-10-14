@@ -77,6 +77,20 @@ no se versionan (ver `.gitignore`).
 python -m pytest
 ```
 
+### Generar el ejecutable
+
+```powershell
+flet pack main.py -D -y --name AnalizadorDelictual --icon Iconos\vistana_logo.ico --add-data "Iconos:Iconos" "recursos:recursos" --product-name Vistana --product-version 1.1
+```
+
+Deja la aplicación en `dist\AnalizadorDelictual\`. `--add-data` es necesario: sin `Iconos`
+la ventana sale sin logo, y sin `recursos` no se puede generar el informe PDF. `flet pack`
+regenera el `.spec` en cada corrida, por eso no se versiona.
+
+El informe PDF lo imprime Microsoft Edge (viene con Windows 10 y 11) o Google Chrome, sin
+abrir ninguna ventana. Si la computadora no tiene ninguno de los dos, se genera un reporte
+más simple. El fondo del mapa del informe necesita conexión a internet.
+
 ---
 
 ## Estructura del proyecto
@@ -138,7 +152,8 @@ Los registros con fecha que no se puede interpretar se descartan y la aplicació
 | `flet` | Interfaz gráfica de escritorio |
 | `pandas` | Carga, limpieza y análisis de datos |
 | `openpyxl` | Lectura/escritura de Excel |
-| `matplotlib` + `seaborn` | Gráficos |
+| `flet-charts` | Gráficos interactivos de la app |
+| `matplotlib` | Gráficos del reporte PDF |
 | `folium` | Mapa interactivo |
 | `reportlab` | Generación de PDF |
 

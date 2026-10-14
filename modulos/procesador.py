@@ -7,6 +7,7 @@ import numpy as np
 import csv
 import logging
 import re
+import unicodedata
 from datetime import date, datetime, time
 from pathlib import Path
 
@@ -23,14 +24,33 @@ FORMATOS_FECHA = [
     "%d/%m/%y", "%d-%m-%y",
 ]
 
-COLUMNAS_REQUERIDAS = {
-    "legajo", "fecha", "hora",
-    "tipo_delito", "jurisdiccion",
-}
+# La única columna sin la cual no hay análisis posible
+COLUMNAS_REQUERIDAS = {"fecha"}
 
-COLUMNAS_OPCIONALES = {
-    "modalidad", "estado", "latitud", "longitud", "descripcion", "delito",
+# Cómo suelen llamarse las columnas en otras planillas, ya normalizados
+# (minúsculas, sin acentos, "_" en lugar de espacios y signos). Se prueban en
+# orden, por nombre exacto (ver también POR_PRIMERA_PALABRA).
+SINONIMOS = {
+    "fecha":        ["fecha", "fecha_hecho", "fecha_del_hecho", "fecha_de_hecho", "fecha_ocurrencia",
+                     "fecha_denuncia", "date"],
+    "hora":         ["hora", "hora_hecho", "hora_del_hecho", "horario", "time"],
+    "legajo":       ["legajo", "nro_legajo", "n_legajo", "numero_legajo", "expediente", "nro_expediente",
+                     "sumario", "causa"],
+    "delito":       ["delito", "categoria", "categoria_delito", "delito_categoria"],
+    "tipo_delito":  ["tipo_delito", "caratula", "calificacion", "figura", "tipo", "hecho"],
+    "jurisdiccion": ["jurisdiccion", "comisaria", "seccional", "dependencia", "unidad_regional"],
+    "modalidad":    ["modalidad", "operandi", "modus_operandi"],
+    "latitud":      ["latitud", "lat", "y"],
+    "longitud":     ["longitud", "lon", "lng", "long", "x"],
+    "coordenadas":  ["coordenadas", "coordenada", "ubicacion", "geolocalizacion", "lat_lon", "latlon"],
 }
+# Campos que se reconocen también por la primera palabra («fecha_del_hecho»,
+# «latitud_wgs84»). No vale para «tipo» o «hecho»: «tipo_de_arma» no es un delito.
+POR_PRIMERA_PALABRA = {"fecha", "hora", "legajo", "latitud", "longitud", "coordenadas"}
+# Valor que toma una columna que la planilla no trae
+SIN_DATO = {"jurisdiccion": "Sin jurisdicción", "tipo_delito": "Sin clasificar"}
+# Hasta qué fila se busca la de los títulos (puede haber un encabezado encima)
+FILAS_ENCABEZADO = 20
 
 
 # ─── Carga ────────────────────────────────────────────────────────────────────
@@ -45,82 +65,120 @@ def cargar_excel(ruta: str) -> pd.DataFrame:
         raise FileNotFoundError(f"No se encontró el archivo: {ruta}")
 
     if ruta.suffix.lower() in (".xlsx", ".xls"):
-        df = pd.read_excel(ruta, engine="openpyxl")
+        df = _leer_excel(ruta)
     elif ruta.suffix.lower() == ".csv":
-        # Intentar lectura directa primero
-        try:
-            df = pd.read_csv(ruta)
-        except Exception:
-            df = None
-
-        # Normalizar nombres y comprobar columnas; si faltan, reintentar
-        def _cols_ok(df_):
-            if df_ is None:
-                return False
-            cols = [c.strip().lower().replace(" ", "_") for c in df_.columns]
-            return COLUMNAS_REQUERIDAS.issubset(set(cols))
-
-        if not _cols_ok(df):
-            # Intentar detectar separador con csv.Sniffer y reintentar con encoding comunes
-            contenido = None
-            try:
-                with open(ruta, "r", errors="replace") as f:
-                    contenido = f.read(8192)
-                sniffer = csv.Sniffer()
-                dialect = sniffer.sniff(contenido)
-                sep = dialect.delimiter
-            except Exception:
-                sep = None
-
-            intentos = []
-            if sep:
-                intentos.append({"sep": sep, "encoding": None})
-            # probar separadores comunes y codificaciones
-            for s in [";", "\t", ",", "|"]:
-                intentos.append({"sep": s, "encoding": None})
-                intentos.append({"sep": s, "encoding": "latin1"})
-
-            df_ok = None
-            for intento in intentos:
-                try:
-                    if intento["encoding"]:
-                        df_try = pd.read_csv(ruta, sep=intento["sep"], encoding=intento["encoding"] )
-                    else:
-                        df_try = pd.read_csv(ruta, sep=intento["sep"])
-                    if _cols_ok(df_try):
-                        df_ok = df_try
-                        break
-                except Exception:
-                    continue
-
-            if df_ok is not None:
-                df = df_ok
-            else:
-                # último intento: leer con engine python y sep=None (pandas inferirá)
-                try:
-                    df = pd.read_csv(ruta, sep=None, engine="python")
-                except Exception:
-                    # dejar df como estaba (posible None) y que la validación posterior falle
-                    pass
+        df = _leer_csv(ruta)
     else:
         raise ValueError("Formato no soportado. Usar .xlsx o .csv")
 
     if df is None:
         raise ValueError("No se pudo leer el archivo: está vacío o no es una tabla válida.")
 
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    reconocidas = _reconocer_columnas(df.columns)
+    originales = dict(zip(_normalizar_columnas(df.columns), map(str, df.columns)))
+    df.columns = [reconocidas.get(c, c) for c in _normalizar_columnas(df.columns)]
     # Columnas sin encabezado que Excel agrega por celdas sueltas fuera de la tabla
     df = df.loc[:, [c for c in df.columns if not c.startswith("unnamed")]]
     _validar_columnas(df)
+    df = _completar_columnas(df)
     df = _limpiar(df)
+    # Qué columna de la planilla se usó para cada dato, para informarlo
+    df.attrs["columnas"] = {campo: originales[c] for c, campo in reconocidas.items()}
     return df
 
 
+def _normalizar_nombre(nombre) -> str:
+    """«Fecha del Hecho» → «fecha_del_hecho»; «N° Legajo» → «n_legajo»."""
+    texto = unicodedata.normalize("NFKD", str(nombre)).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "_", texto.lower()).strip("_")
+
+
+def _normalizar_columnas(columnas) -> list:
+    return [_normalizar_nombre(c) or f"unnamed_{i}" for i, c in enumerate(columnas)]
+
+
+def _reconocer_columnas(columnas) -> dict:
+    """{columna normalizada de la planilla: nombre que usa la app}"""
+    normalizadas = _normalizar_columnas(columnas)
+    reconocidas = {}
+    for campo, sinonimos in SINONIMOS.items():
+        libres = [c for c in normalizadas if c not in reconocidas]
+        elegida = next((s for s in sinonimos if s in libres), None)
+        if elegida is None and campo in POR_PRIMERA_PALABRA:
+            # Las de una letra, como «x», solo valen solas
+            elegida = next((c for c in libres for s in sinonimos
+                            if len(s) > 1 and c.split("_")[0] == s), None)
+        if elegida is not None:
+            reconocidas[elegida] = campo
+    return reconocidas
+
+
+def _leer_excel(ruta: Path) -> pd.DataFrame:
+    """
+    Busca la tabla en todas las hojas: la fila de títulos es la primera que
+    tiene una columna de fecha (arriba puede haber un encabezado o filas vacías).
+    """
+    hojas = pd.read_excel(ruta, sheet_name=None, header=None, engine="openpyxl")
+    for crudo in hojas.values():
+        for i in range(min(FILAS_ENCABEZADO, len(crudo))):
+            titulos = crudo.iloc[i].tolist()
+            if "fecha" in _reconocer_columnas(titulos).values():
+                df = crudo.iloc[i + 1:].dropna(how="all").reset_index(drop=True)
+                df.columns = ["" if pd.isna(t) else t for t in titulos]
+                return df.infer_objects()
+    # Ninguna hoja tiene fecha: la primera tal cual, para que la validación lo diga
+    return pd.read_excel(ruta, engine="openpyxl")
+
+
+def _completar_columnas(df: pd.DataFrame) -> pd.DataFrame:
+    """Lo que la planilla no trae se completa para que el resto del análisis funcione."""
+    df = df.copy()
+    if ("latitud" not in df.columns or "longitud" not in df.columns) and "coordenadas" in df.columns:
+        # «-31.53, -68.52» en una sola celda (también con coma decimal: «-31,53; -68,52»)
+        partes = df["coordenadas"].astype(str).str.extract(
+            r"(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)"
+        )
+        df["latitud"], df["longitud"] = partes[0], partes[1]
+    if "tipo_delito" not in df.columns and "delito" in df.columns:
+        df["tipo_delito"] = df["delito"]
+    for campo, valor in SIN_DATO.items():
+        if campo not in df.columns:
+            df[campo] = valor
+    for campo in ("legajo", "hora"):
+        if campo not in df.columns:
+            df[campo] = pd.Series(np.nan, index=df.index, dtype=object)
+    return df
+
+
+def _leer_csv(ruta: Path):
+    """
+    Prueba codificaciones y separadores comunes hasta encontrar las columnas
+    obligatorias. Si ninguna combinación las trae, devuelve lo que pandas
+    infiera (para que la validación diga cuáles faltan) o None.
+    """
+    # utf-8-sig antes que latin1: latin1 nunca falla y desfiguraría los acentos
+    for encoding in ("utf-8-sig", "latin1"):
+        for sep in (",", ";", "\t", "|"):
+            try:
+                df = pd.read_csv(ruta, sep=sep, encoding=encoding)
+            except ValueError:  # incluye UnicodeDecodeError, ParserError y EmptyDataError
+                continue
+            if COLUMNAS_REQUERIDAS.issubset(_reconocer_columnas(df.columns).values()):
+                return df
+    for encoding in ("utf-8-sig", "latin1"):
+        try:
+            return pd.read_csv(ruta, sep=None, engine="python", encoding=encoding)
+        except (ValueError, csv.Error):  # csv.Error: no pudo inferir el separador
+            continue
+    return None
+
+
 def _validar_columnas(df: pd.DataFrame) -> None:
-    faltantes = COLUMNAS_REQUERIDAS - set(df.columns)
-    if faltantes:
+    if "fecha" not in df.columns:
+        columnas = ", ".join(str(c) for c in df.columns) or "ninguna"
         raise ValueError(
-            f"Faltan columnas obligatorias: {', '.join(sorted(faltantes))}"
+            "No se encontró la columna de fecha (por ejemplo «fecha» o «fecha del hecho»). "
+            f"Columnas de la planilla: {columnas}"
         )
 
 
@@ -342,7 +400,6 @@ def validar_datos_completos(df: pd.DataFrame) -> dict:
         resumen["fechas_antiguas"] = str(fecha_min.date())
 
     # Verificar que no haya fechas futuras (hoy es 2026, así que cualquiera > hoy es sospechosa)
-    from datetime import datetime
     hoy = datetime.now()
     fechas_futuras = df[df["fecha"] > pd.Timestamp(hoy)]
     if len(fechas_futuras) > 0:
@@ -402,7 +459,7 @@ def filtrar(
     if jurisdicciones:
         mask &= df["jurisdiccion"].isin(jurisdicciones)
     if tipos_delito:
-        col = _col_delito(df)
+        col = col_delito(df)
         mask &= df[col].isin(tipos_delito)
     if anio:
         mask &= df["anio"] == int(anio)
@@ -412,14 +469,14 @@ def filtrar(
 
 # ─── Resúmenes ────────────────────────────────────────────────────────────────
 
-def _col_delito(df: pd.DataFrame) -> str:
+def col_delito(df: pd.DataFrame) -> str:
     """Devuelve 'delito' si la columna existe, sino 'tipo_delito'."""
     return "delito" if "delito" in df.columns else "tipo_delito"
 
 
 def resumen_general(df: pd.DataFrame) -> dict:
     """Devuelve un dict con métricas clave para mostrar en la GUI."""
-    col = _col_delito(df)
+    col = col_delito(df)
     if df.empty:
         return {
             "total_denuncias":   0,
@@ -448,5 +505,5 @@ def tabla_pivot(df: pd.DataFrame,
                 columnas=None) -> pd.DataFrame:
     """Tabla cruzada lista para mostrar o exportar."""
     if columnas is None:
-        columnas = _col_delito(df)
+        columnas = col_delito(df)
     return pd.crosstab(df[filas], df[columnas], margins=True, margins_name="Total")

@@ -16,6 +16,7 @@ from pathlib import Path
 from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_pivot
 from modulos.graficos   import generar_todos
 from modulos.exportador import generar_reporte
+from modulos.marca      import NOMBRE_VISIBLE
 
 
 def main():
@@ -26,7 +27,7 @@ def main():
     logging.basicConfig(level=logging.WARNING, format="   ! %(message)s")
 
     parser = argparse.ArgumentParser(
-        description="Vistana — modo terminal"
+        description=f"{NOMBRE_VISIBLE} — modo terminal"
     )
     parser.add_argument("--archivo",      required=True, help="Ruta al .xlsx o .csv")
     parser.add_argument("--anio",         type=int,      help="Filtrar por año")
@@ -37,7 +38,7 @@ def main():
     args = parser.parse_args()
 
     print("\n══════════════════════════════════════════")
-    print("   ANALIZADOR DELICTUAL  —  modo terminal  ")
+    print(f"   {NOMBRE_VISIBLE.upper()}  —  modo terminal")
     print("══════════════════════════════════════════\n")
 
     # 1. Carga

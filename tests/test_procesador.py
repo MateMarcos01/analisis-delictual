@@ -181,6 +181,73 @@ def test_csv_con_punto_y_coma_latin1_y_fechas_iso(tmp_path):
     assert df["tipo_delito"].tolist() == ["Daño", "Robo"]
 
 
+def test_csv_utf8_con_bom_y_tabulaciones(tmp_path):
+    # Así lo guarda Excel como "CSV UTF-8": el BOM no debe quedar pegado a "legajo"
+    ruta = tmp_path / "denuncias.csv"
+    ruta.write_text(
+        "legajo\tfecha\thora\ttipo_delito\tjurisdiccion\n"
+        "1\t04/01/2025\t10:00\tDaño\tCOMISARÍA 13°\n",
+        encoding="utf-8-sig",
+    )
+    df = cargar_excel(str(ruta))
+    assert df["tipo_delito"].tolist() == ["Daño"]
+    assert df["jurisdiccion"].tolist() == ["Comisaría 13°"]
+
+
+def test_solo_la_fecha_es_obligatoria(tmp_path):
+    ruta = tmp_path / "denuncias.csv"
+    ruta.write_text("legajo,fecha\n1,04/01/2025\n", encoding="utf-8")
+    df = cargar_excel(str(ruta))
+    assert df["jurisdiccion"].tolist() == ["Sin Jurisdicción"]
+    assert df["tipo_delito"].tolist() == ["Sin Clasificar"]
+    assert df.attrs["descartes"]["horas_invalidas"] == 1
+
+
+def test_reconoce_columnas_con_otros_nombres_y_titulos_arriba(tmp_path):
+    ruta = tmp_path / "otra planilla.xlsx"
+    with pd.ExcelWriter(ruta) as escritor:
+        pd.DataFrame({"x": ["hoja sin datos"]}).to_excel(escritor, sheet_name="Portada", index=False)
+        tabla = pd.DataFrame({
+            "N° Legajo": [1, 2],
+            "Fecha del Hecho": ["04/01/2025", "05/01/2025"],
+            "Hora": ["10:00", "23:30"],
+            "Carátula": ["Robo Simple", "Hurto"],
+            "Comisaría": ["Comisaría 6°", "Comisaría 6°"],
+            "Latitud (WGS84)": [-31.53, -31.54],
+            "Long": [-68.52, -68.53],
+            "Tipo de arma": ["Blanca", "Ninguna"],
+        })
+        # Un título encima de la tabla
+        tabla.to_excel(escritor, sheet_name="Datos", index=False, startrow=2)
+        escritor.sheets["Datos"]["A1"] = "Denuncias enero 2025"
+    df = cargar_excel(str(ruta))
+    assert _fechas(df) == ["2025-01-04", "2025-01-05"]
+    assert df["tipo_delito"].tolist() == ["Robo Simple", "Hurto"]
+    assert df["jurisdiccion"].tolist() == ["Comisaría 6°"] * 2
+    assert df["latitud"].tolist() == [-31.53, -31.54]
+    assert df["longitud"].tolist() == [-68.52, -68.53]
+    assert df.attrs["columnas"]["fecha"] == "Fecha del Hecho"
+    # «Tipo de arma» no se confunde con el tipo de delito
+    assert df.attrs["columnas"]["tipo_delito"] == "Carátula"
+
+
+def test_coordenadas_en_una_sola_columna(tmp_path):
+    from modulos.mapa import puntos_validos
+    ruta = tmp_path / "denuncias.csv"
+    ruta.write_text(
+        "fecha;coordenadas\n04/01/2025;-31.53, -68.52\n05/01/2025;-31,54 -68,53\n06/01/2025;sin dato\n",
+        encoding="utf-8",
+    )
+    df = cargar_excel(str(ruta))
+    assert [(p["lat"], p["lon"]) for p in puntos_validos(df)] == [(-31.53, -68.52), (-31.54, -68.53)]
+
+
+def test_csv_vacio_no_es_una_tabla_valida(tmp_path):
+    ruta = tmp_path / "denuncias.csv"
+    ruta.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="No se pudo leer"):
+        cargar_excel(str(ruta))
+
 def test_xlsx_descarta_columnas_sin_encabezado(tmp_path):
     ruta = tmp_path / "denuncias.xlsx"
     crudo = _crudo(["2025-01-04", "2025-02-05"])
@@ -201,5 +268,5 @@ def test_csv_vacio_da_un_error_claro(tmp_path):
 def test_faltan_columnas_obligatorias(tmp_path):
     ruta = tmp_path / "mal.csv"
     ruta.write_text("a,b\n1,2\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="Faltan columnas obligatorias"):
+    with pytest.raises(ValueError, match="columna de fecha.*Columnas de la planilla: a, b"):
         cargar_excel(str(ruta))

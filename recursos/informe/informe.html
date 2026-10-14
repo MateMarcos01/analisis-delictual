@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Informe de evaluación delictual · {{ emitido }}</title>
+  <base href="{{ base }}">
+  <link rel="stylesheet" href="vendor/fuentes/fuentes.css">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="informe.css">
+  <style>@page { @bottom-left { content: "{{ pie }} · Informe de evaluación delictual"; } }</style>
+</head>
+<body>
+  <header class="title-block">
+    <h1>Informe de evaluación delictual</h1>
+    <p class="emitido">Emitido el {{ emitido }}</p>
+  </header>
+
+  {% if not total %}
+  <p class="empty">No hay hechos que cumplan los filtros aplicados, por lo que no hay nada que informar.</p>
+  {% else %}
+  <section>
+    <h2>Resumen</h2>
+    <p>{{ textos.resumen }}</p>
+    <div class="indicators">
+      {% for indicador in indicadores %}<div><span>{{ indicador.etiqueta }}</span><strong>{{ indicador.valor }}</strong><small>{{ indicador.detalle }}</small></div>{% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Distribución territorial</h2>
+    {% if con_coordenadas %}
+    <div id="mapa" class="map"></div>
+    <p class="caption">
+      <span>Mapa de calor de {{ con_coordenadas|n }} {{ "hecho" if con_coordenadas == 1 else "hechos" }} con coordenadas.</span>
+      <span class="heat-legend">Menor concentración <i></i> Mayor concentración</span>
+    </p>
+    {% else %}
+    <p>Ningún hecho tiene coordenadas válidas, por lo que no se puede mostrar su distribución en el mapa.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Delitos</h2>
+    <p>{{ textos.delitos }}</p>
+    <div class="crime-layout">
+      <div class="donut"><canvas id="grafico-delitos" aria-label="Distribución de hechos por delito"></canvas></div>
+      <table class="data">
+        <thead><tr><th scope="col">Delito</th><th scope="col" class="num">Hechos</th><th scope="col" class="num">%</th></tr></thead>
+        <tbody>
+          {% for delito in delitos %}<tr><th scope="row"><i class="swatch" style="background: {{ delito.color }}"></i>{{ delito.nombre }}</th><td class="num">{{ delito.cantidad|n }}</td><td class="num">{{ delito.porcentaje }}</td></tr>
+          {% endfor %}
+        </tbody>
+        <tfoot><tr><th scope="row">Total</th><td class="num">{{ total|n }}</td><td class="num">100 %</td></tr></tfoot>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Comisarías</h2>
+    <p>{{ textos.comisarias }}</p>
+    <table class="data">
+      <thead><tr><th scope="col">Comisaría</th>{% for delito in delitos %}<th scope="col" class="num">{{ delito.nombre }}</th>{% endfor %}<th scope="col" class="num">Total</th><th scope="col" class="num">%</th></tr></thead>
+      <tbody>
+        {% for fila in tabla_comisarias %}<tr><th scope="row">{{ fila.nombre }}</th>{% for valor in fila.valores %}<td class="num">{{ valor|n if valor else "—" }}</td>{% endfor %}<td class="num strong">{{ fila.total|n }}</td><td class="num">{{ fila.porcentaje }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Días y franjas horarias</h2>
+    <p>{{ textos.horario }}</p>
+    {% if horario.total %}
+    <table class="grid">
+      <thead><tr><th scope="col"><span class="sr-only">Franja horaria</span></th>{% for dia in horario.dias %}<th scope="col">{{ dia }}</th>{% endfor %}<th scope="col" class="total">Total</th></tr></thead>
+      <tbody>
+        {% for fila in horario.filas %}
+        <tr>
+          <th scope="row">{{ fila.franja }}</th>
+          {% for valor in fila.valores %}{% set peso = valor / horario.maximo if horario.maximo else 0 %}<td class="cell{% if peso > 0.68 %} cell-strong{% endif %}" style="--peso: {{ (peso * 100)|round(1) }}%">{{ valor|n if valor else '' }}</td>{% endfor %}
+          <td class="total">{{ fila.total|n }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr><th scope="row">Total</th>{% for valor in horario.por_dia %}<td class="total">{{ valor|n }}</td>{% endfor %}<td class="total">{{ horario.total|n }}</td></tr></tfoot>
+    </table>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Evolución mensual</h2>
+    <p>{{ textos.mensual }}</p>
+    {% if graficos.meses|length > 1 %}<div class="trend"><canvas id="grafico-mensual" aria-label="Hechos por mes"></canvas></div>{% endif %}
+  </section>
+
+  <section>
+    <h2>Notas sobre los datos</h2>
+    <ul class="notes">{% for nota in notas %}<li>{{ nota }}</li>{% endfor %}</ul>
+  </section>
+
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/leaflet-heat.js"></script>
+  <script src="vendor/chart.umd.min.js"></script>
+  <script>
+    const graficos = {{ graficos|tojson }};
+    const puntos = {{ puntos|tojson }};
+
+    // Mapa: solo calor, encuadrado en el grueso de los hechos. Sin animaciones:
+    // el navegador imprime apenas termina de cargar.
+    const elementoMapa = document.getElementById('mapa');
+    if (elementoMapa) {
+      const map = L.map(elementoMapa, {
+        zoomControl: false, zoomSnap: 0.25, fadeAnimation: false, zoomAnimation: false, markerZoomAnimation: false,
+      }).setView([-31.52, -68.52], 11);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+
+      // Unos pocos puntos muy alejados (a menudo coordenadas mal cargadas)
+      // achicarían todo el mapa: se encuadra entre el 2 % y el 98 %
+      const cuantil = (valores, q) => valores[Math.min(valores.length - 1, Math.floor(q * valores.length))];
+      const latitudes = puntos.map(p => p[0]).sort((a, b) => a - b);
+      const longitudes = puntos.map(p => p[1]).sort((a, b) => a - b);
+      map.fitBounds([
+        [cuantil(latitudes, 0.02), cuantil(longitudes, 0.02)],
+        [cuantil(latitudes, 0.98), cuantil(longitudes, 0.98)],
+      ], { padding: [14, 14], maxZoom: 16 });
+
+      // Escala del calor según lo que se ve: el rojo queda para lo más concentrado
+      const RADIO = 18, DIFUSION = 16, celda = RADIO + DIFUSION;
+      const porCelda = new Map();
+      let maximo = 1;
+      for (const [lat, lon, cantidad] of puntos) {
+        const pixel = map.project([lat, lon], map.getZoom());
+        const clave = Math.floor(pixel.x / celda) + ':' + Math.floor(pixel.y / celda);
+        const suma = (porCelda.get(clave) || 0) + cantidad;
+        porCelda.set(clave, suma);
+        maximo = Math.max(maximo, suma);
+      }
+      L.heatLayer(puntos, {
+        radius: RADIO, blur: DIFUSION, minOpacity: 0.12, maxZoom: 1, max: Math.max(1, maximo * 0.6),
+        gradient: { 0.25: '#00A63E', 0.55: '#FFD000', 0.8: '#FF7A00', 1: '#E60000' },
+      }).addTo(map);
+    }
+
+    // Gráficos sin animación: tienen que estar completos al imprimir
+    const tinta = '#2B3442';
+    const tenue = '#6B7280';
+    const fuente = { family: 'DM Mono', size: 10 };
+    document.fonts.ready.then(() => {
+      new Chart(document.getElementById('grafico-delitos'), {
+        type: 'doughnut',
+        data: { labels: graficos.delitos, datasets: [{ data: graficos.cantidades, backgroundColor: graficos.colores, borderColor: '#ffffff', borderWidth: 2 }] },
+        options: { responsive: true, maintainAspectRatio: false, animation: false, cutout: '60%', plugins: { legend: { display: false }, tooltip: { enabled: false } } },
+      });
+      const mensual = document.getElementById('grafico-mensual');
+      if (mensual) {
+        new Chart(mensual, {
+          type: 'line',
+          data: { labels: graficos.meses, datasets: [{ data: graficos.mensual, borderColor: tinta, backgroundColor: 'rgba(107, 114, 128, 0.18)', fill: true, tension: 0.3, pointBackgroundColor: tinta, pointRadius: 3, borderWidth: 2 }] },
+          options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: {
+              x: { grid: { display: false }, ticks: { color: tenue, maxRotation: 0, font: fuente }, border: { color: '#C9CED6' } },
+              y: { beginAtZero: true, grid: { color: 'rgba(31, 41, 51, 0.08)' }, ticks: { color: tenue, precision: 0, font: fuente }, border: { display: false } },
+            },
+          },
+        });
+      }
+    });
+  </script>
+  {% endif %}
+</body>
+</html>

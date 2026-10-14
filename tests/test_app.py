@@ -41,9 +41,6 @@ def test_filtrar_invalida_los_graficos_anteriores(app):
     assert app.rutas_graficos == {}
     assert app.tarjetas["total_denuncias"].value == "5"
 
-    asyncio.run(app._exportar_pdf())
-    assert app.alertas == ["Sin gráficos"]
-
 
 def _elegir_destino(monkeypatch, ruta, al_elegir=None):
     """Simula el diálogo 'Guardar como' devolviendo 'ruta'."""
@@ -54,10 +51,15 @@ def _elegir_destino(monkeypatch, ruta, al_elegir=None):
     monkeypatch.setattr(main.ft.FilePicker, "save_file", save_file)
 
 
-def test_el_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path, carpeta_de_trabajo):
-    app.rutas_graficos = generar_todos(app.df_filtrado)
-    assert all(Path(r).is_relative_to(carpeta_de_trabajo) for r in app.rutas_graficos.values())
+def _pdf_falso(df, ruta):
+    """Reemplaza al navegador en los tests que no miran el contenido del PDF."""
+    Path(ruta).write_bytes(b"%PDF-1.4 falso")
+    return Path(ruta)
 
+
+def test_el_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path):
+    # Sin graficos generados: el informe sale directo de los datos
+    app.rutas_graficos = {}
     destino = tmp_path / "mis reportes" / "informe"       # sin extensión
     _elegir_destino(monkeypatch, str(destino))
     asyncio.run(app._exportar_pdf())
@@ -67,7 +69,7 @@ def test_el_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path, car
 
 
 def test_el_pdf_conserva_los_puntos_del_nombre(app, monkeypatch, tmp_path):
-    app.rutas_graficos = generar_todos(app.df_filtrado)
+    monkeypatch.setattr(main, "exportar_informe", _pdf_falso)
     _elegir_destino(monkeypatch, str(tmp_path / "informe v1.2"))
     asyncio.run(app._exportar_pdf())
     assert (tmp_path / "informe v1.2.pdf").exists()
@@ -82,6 +84,24 @@ def test_no_pisa_un_pdf_que_el_dialogo_no_confirmo(app, monkeypatch, tmp_path):
     assert app.alertas == ["El archivo ya existe"]
     assert existente.read_bytes() == b"otro reporte"
 
+
+def test_el_excel_agrega_la_extension_y_trae_datos_y_pivot(app, monkeypatch, tmp_path):
+    _elegir_destino(monkeypatch, str(tmp_path / "datos v1.2"))
+    asyncio.run(app._exportar_excel())
+    assert app.alertas == ["Excel"]
+    hojas = pd.read_excel(tmp_path / "datos v1.2.xlsx", sheet_name=None)
+    assert list(hojas) == ["Denuncias", "Pivot"]
+    assert len(hojas["Denuncias"]) == 10
+    assert "hora_dt" not in hojas["Denuncias"].columns
+
+
+def test_no_pisa_un_excel_que_el_dialogo_no_confirmo(app, monkeypatch, tmp_path):
+    existente = tmp_path / "datos.xlsx"
+    existente.write_bytes(b"otro archivo")
+    _elegir_destino(monkeypatch, str(tmp_path / "datos"))
+    asyncio.run(app._exportar_excel())
+    assert app.alertas == ["El archivo ya existe"]
+    assert existente.read_bytes() == b"otro archivo"
 
 def test_la_carpeta_de_trabajo_siempre_es_absoluta(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
@@ -98,9 +118,21 @@ def test_la_app_abre_aunque_no_se_pueda_crear_el_registro(monkeypatch, tmp_path)
     main.configurar_registro()   # no debe lanzar
 
 
+def test_sin_navegador_se_exporta_el_reporte_simple(app, monkeypatch, tmp_path):
+    def sin_navegador(df, ruta):
+        raise main.NavegadorNoEncontrado("sin navegador")
+    monkeypatch.setattr(main, "exportar_informe", sin_navegador)
+    _elegir_destino(monkeypatch, str(tmp_path / "informe.pdf"))
+    asyncio.run(app._exportar_pdf())
+    assert app.alertas == ["PDF Exportado"]
+    assert (tmp_path / "informe.pdf").read_bytes().startswith(b"%PDF")
+    assert "reporte simple" in app.txt_log.value
+
+
 def test_cancelar_el_dialogo_no_exporta(app, monkeypatch):
     _elegir_destino(monkeypatch, None)
     asyncio.run(app._exportar_pdf())
+    asyncio.run(app._exportar_excel())
     assert app.alertas == []
 
 
@@ -120,7 +152,7 @@ def test_un_grafico_que_falla_se_informa_en_actividad(app, monkeypatch, tmp_path
 
     rutas = generar_todos(app.df_filtrado, carpeta=tmp_path)
 
-    assert "heatmap_horario" not in rutas and len(rutas) == 5
+    assert "heatmap_horario" not in rutas and len(rutas) == 3
     assert "heatmap_horario" in app.txt_log.value
     assert "sin datos de hora" in app.txt_log.value
 
@@ -189,7 +221,7 @@ def test_limpiar_deja_la_app_como_recien_abierta(app):
     assert not any(g.exists() for g in graficos_en_disco)
 
     asyncio.run(app._exportar_pdf())
-    assert app.alertas == ["Sin gráficos"]
+    assert app.alertas == ["Sin datos"]
 
 
 def test_limpiar_pide_confirmacion_y_no_toca_nada_hasta_aceptar(app):
@@ -257,7 +289,7 @@ def archivo(tmp_path, monkeypatch):
 def test_cli_completa(archivo, monkeypatch, tmp_path):
     monkeypatch.setattr("sys.argv", ["cli.py", "--archivo", archivo])
     assert cli.main() == 0
-    assert len(list((tmp_path / "salidas" / "graficos").glob("*.png"))) == 6
+    assert len(list((tmp_path / "salidas" / "graficos").glob("*.png"))) == 4
     assert len(list((tmp_path / "salidas" / "reportes").glob("*.pdf"))) == 1
 
 
@@ -269,3 +301,10 @@ def test_cli_filtro_sin_resultados(archivo, monkeypatch):
 def test_cli_archivo_inexistente(monkeypatch, tmp_path):
     monkeypatch.setattr("sys.argv", ["cli.py", "--archivo", str(tmp_path / "nada.xlsx")])
     assert cli.main() == 1
+
+
+def test_al_cargar_se_informan_las_columnas_reconocidas_y_las_que_faltan(app):
+    app._informar_columnas({"fecha": "Fecha del Hecho", "delito": "DELITO", "coordenadas": "Ubicación"})
+    assert "fecha = «Fecha del Hecho»" in app.txt_log.value
+    assert "delito = «DELITO»" not in app.txt_log.value      # mismo nombre, no hace falta decirlo
+    assert "no tiene columna de hora, comisaría:" in app.txt_log.value

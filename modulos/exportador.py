@@ -1,9 +1,12 @@
 """
 modulos/exportador.py
-Genera un reporte PDF con los gráficos y un resumen estadístico.
+Genera un reporte PDF con los gráficos y un resumen estadístico,
+y exporta a Excel los datos filtrados.
 """
 from pathlib import Path
 from datetime import datetime
+
+import pandas as pd
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
@@ -14,8 +17,10 @@ from reportlab.platypus import (
     Image, Table, TableStyle, PageBreak,
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.utils import ImageReader
 
 from modulos.marca import LEMA, LOGO, NOMBRE_VISIBLE
+from modulos.procesador import tabla_pivot
 
 ANCHO, ALTO = A4
 MARGEN      = 2 * cm
@@ -68,7 +73,7 @@ def _membrete(canvas, doc):
 
 def nombre_reporte() -> str:
     """Nombre de archivo sugerido para un reporte nuevo."""
-    return f"reporte_delictual_{datetime.now():%Y%m%d_%H%M%S}.pdf"
+    return f"informe_delictual_{datetime.now():%Y%m%d_%H%M%S}.pdf"
 
 
 def generar_reporte(
@@ -171,13 +176,11 @@ def generar_reporte(
 
     # ── Gráficos ──────────────────────────────────────────────────────────────
     TITULOS = {
-        "barras_tipo":          "3. Denuncias por tipo de delito",
-        "serie_temporal":       "4. Evolución mensual",
-        "barras_jurisdiccion":  "5. Distribución por jurisdicción",
-        "heatmap_horario":      "6. Concentración horaria y día",
-        "donut":                "7. Proporción por tipo de delito",
-        "ranking_jurisdiccion": "8. Ranking de jurisdicciones",
-        "comparacion_anual":    "9. Comparación interanual",
+        "serie_temporal":       "3. Evolución mensual",
+        "barras_tipo":          "4. Denuncias por delito",
+        "barras_jurisdiccion":  "5. Delitos por jurisdicción",
+        "heatmap_horario":      "6. Concentración por franja horaria y día",
+        "comparacion_anual":    "7. Comparación entre años",
     }
 
     img_ancho = ANCHO - 2 * MARGEN
@@ -188,9 +191,25 @@ def generar_reporte(
         titulo_grafico = TITULOS.get(clave, clave.replace("_", " ").title())
         story.append(Paragraph(titulo_grafico, est_sub))
         story.append(Spacer(1, 0.2 * cm))
-        img = Image(ruta, width=img_ancho, height=img_ancho * 0.48)
+        # Cada gráfico tiene su propia proporción: no se estira a una fija
+        ancho_px, alto_px = ImageReader(ruta).getSize()
+        alto = img_ancho * alto_px / ancho_px
+        # Con muchas jurisdicciones el gráfico es alto: se achica para que entre en la hoja
+        escala = min(1, (ALTO - MARGEN_SUPERIOR - MARGEN - 2 * cm) / alto)
+        img = Image(ruta, width=img_ancho * escala, height=alto * escala)
         story.append(img)
 
     doc.build(story, onFirstPage=_membrete, onLaterPages=_membrete)
     return ruta_pdf
 
+
+def exportar_excel(df: pd.DataFrame, ruta) -> Path:
+    """Guarda las denuncias en una hoja y la tabla cruzada en otra."""
+    ruta = Path(ruta)
+    with pd.ExcelWriter(ruta, engine="openpyxl") as writer:
+        # Columnas internas de trabajo que no le sirven a quien abre el Excel
+        df.drop(columns=["hora_dt", "franja"], errors="ignore").to_excel(
+            writer, sheet_name="Denuncias", index=False
+        )
+        tabla_pivot(df).to_excel(writer, sheet_name="Pivot")
+    return ruta

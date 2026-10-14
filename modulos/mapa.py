@@ -11,7 +11,8 @@ from pathlib import Path
 import folium
 from branca.element import MacroElement
 from jinja2 import Template
-from modulos.graficos import _col_delito, _color_delito
+from modulos.graficos import _color_delito, orden_delito
+from modulos.procesador import col_delito
 from modulos.rutas import ruta_mapa
 from folium.plugins import FeatureGroupSubGroup, HeatMap, MarkerCluster
 
@@ -93,45 +94,35 @@ def puntos_validos(df):
 
     # Las capas del mapa van por DELITO (la categoría normalizada). La carátula
     # (tipo_delito) es el detalle de cada causa y solo se muestra en el globo.
-    col_tipo = _col_delito(df)
+    col_tipo = col_delito(df)
     con_caratula = col_tipo != "tipo_delito" and "tipo_delito" in df.columns
-    puntos = []
 
-    for _, fila in df.dropna(subset=["latitud", "longitud"]).iterrows():
-        lat = _normalizar_coordenada(fila["latitud"])
-        lon = _normalizar_coordenada(fila["longitud"])
+    # Por columnas y no fila por fila (iterrows): se recalcula en cada filtro
+    datos = df.dropna(subset=["latitud", "longitud"])
+    lat = datos["latitud"].map(_normalizar_coordenada).astype(float)
+    lon = datos["longitud"].map(_normalizar_coordenada).astype(float)
+    dentro = lat.between(-35, -28, inclusive="neither") & lon.between(-72, -65, inclusive="neither")
+    datos, lat, lon = datos[dentro], lat[dentro], lon[dentro]
 
-        if lat is None or lon is None:
-            continue
-        if not (-35 < lat < -28 and -72 < lon < -65):
-            continue
+    def texto(columna, defecto=""):
+        if columna not in datos.columns:
+            return [defecto] * len(datos)
+        return datos[columna].astype(str).tolist()
 
-        puntos.append({
-            "lat": lat,
-            "lon": lon,
-            "jurisdiccion": str(fila.get("jurisdiccion", "Sin jurisdicción")),
-            "tipo": str(fila.get(col_tipo, "Sin tipo")),
-            "caratula": str(fila["tipo_delito"]) if con_caratula else "",
-            "modalidad": str(fila.get("modalidad", "")),
-            "fecha": str(fila.get("fecha", ""))[:10],
-        })
-
-    return puntos
-
-def _orden_delito(nombre: str):
-    """Mismo orden que los gráficos: Robo, Hurto, Ttva Robo, Ttva Hurto y el resto."""
-    n = nombre.lower()
-    tentativa = "tentativa" in n or "ttva" in n
-    if "robo" in n:
-        return (2 if tentativa else 0, n)
-    if "hurto" in n:
-        return (3 if tentativa else 1, n)
-    return (4, n)
-
+    caratulas = texto("tipo_delito") if con_caratula else [""] * len(datos)
+    return [
+        {"lat": la, "lon": lo, "jurisdiccion": j, "tipo": t,
+         "caratula": c, "modalidad": m, "fecha": f[:10]}
+        for la, lo, j, t, c, m, f in zip(
+            lat.tolist(), lon.tolist(),
+            texto("jurisdiccion", "Sin jurisdicción"), texto(col_tipo, "Sin tipo"),
+            caratulas, texto("modalidad"), texto("fecha"),
+        )
+    ]
 
 def tipos_disponibles(df):
     """Delitos con al menos un punto válido (para armar los checkboxes)."""
-    return sorted({p["tipo"] for p in puntos_validos(df)}, key=_orden_delito)
+    return sorted({p["tipo"] for p in puntos_validos(df)}, key=orden_delito)
 
 
 ESTILO_PANEL = """
@@ -331,7 +322,7 @@ def generar_mapa_html(df, tipos=None, ruta=None) -> Path:
     # Nada se dibuja al abrir (show=False): el mapa arranca liviano y el panel
     # prende lo que el usuario elige. Cada delito es un subgrupo del cluster.
     grupos = []
-    tipos_sel = sorted({p["tipo"] for p in puntos}, key=_orden_delito)
+    tipos_sel = sorted({p["tipo"] for p in puntos}, key=orden_delito)
     for tipo in tipos_sel:
         color = _color_delito(tipo)
         grupo = FeatureGroupSubGroup(cluster, name=tipo, control=False, show=False)

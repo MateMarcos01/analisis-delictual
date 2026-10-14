@@ -1,0 +1,7 @@
+Bibliotecas que usa el informe PDF, copiadas para que funcione sin internet
+(solo el fondo del mapa necesita conexión).
+
+leaflet.js, leaflet.css   Leaflet 1.9.4        BSD-2-Clause  https://leafletjs.com
+leaflet-heat.js           Leaflet.heat 0.2.0   BSD-2-Clause  https://github.com/Leaflet/Leaflet.heat
+chart.umd.min.js          Chart.js 4.4.4       MIT           https://www.chartjs.org
+fuentes/                  IBM Plex Sans, DM Mono  SIL OFL 1.1 (ver OFL-*.txt)

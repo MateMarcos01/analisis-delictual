@@ -2,7 +2,7 @@ pandas==3.0.6
 numpy==2.5.3
 openpyxl==3.1.5
 matplotlib==3.11.2
-seaborn==0.13.2
+flet-charts==1.0.3
 folium==0.20.0
 reportlab==5.0.1
 flet==1.0.3

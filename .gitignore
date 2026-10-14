@@ -55,3 +55,7 @@ datos/*.csv
 .env
 .env.local
 *.~lock.*
+
+# Generados: flet pack rehace el .spec en cada compilación; graphify su grafo
+*.spec
+graphify-out/

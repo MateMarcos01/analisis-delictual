@@ -6,6 +6,7 @@ Ejecutar con:
 """
 import asyncio
 import logging
+import tempfile
 import threading
 import webbrowser
 from datetime import datetime
@@ -14,19 +15,20 @@ from pathlib import Path
 
 import flet as ft
 import matplotlib
-import pandas as pd
 
 # Backend sin ventana: los gráficos se generan en un hilo secundario
 # y ya no hay Tkinter, así que "Agg" es lo correcto.
 matplotlib.use("Agg")
 
 # Importar módulos propios (Lógica de negocio intacta)
-from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_pivot
+from modulos.procesador import cargar_excel, col_delito, resumen_general, filtrar, tabla_pivot
 from modulos.graficos import generar_todos
-from modulos.exportador import generar_reporte, nombre_reporte
+from modulos.graficos_app import tablero
+from modulos.exportador import exportar_excel, generar_reporte, nombre_reporte
+from modulos.informe import NavegadorNoEncontrado, exportar_informe
 from modulos.mapa import generar_mapa_html, puntos_validos
-from modulos.marca import ICONO_VENTANA, LEMA, LOGO, NOMBRE_VISIBLE
-from modulos.rutas import carpeta_documentos, carpeta_logs, ruta_mapa
+from modulos.marca import ICONO_VENTANA, LEMA, LOGO, NOMBRE_VISIBLE, VERSION
+from modulos.rutas import carpeta_app, carpeta_documentos, carpeta_logs, ruta_mapa
 
 
 class _LogEnPantalla(logging.Handler):
@@ -207,10 +209,9 @@ class AnalizadorApp:
 
         # Tab 3: Gráficos
         self.col_graficos = ft.Column(
-            scroll=ft.ScrollMode.ALWAYS,
+            scroll=ft.ScrollMode.AUTO,
             expand=True,
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
 
         # Tab 4: Mapa
@@ -340,6 +341,7 @@ class AnalizadorApp:
 
             self._actualizar_metricas(self.df_filtrado)
             self._poblar_tabla(self.df_filtrado)
+            self._cargar_mapa(self.df_filtrado)
 
             self._log(f"✓ Archivo cargado: {ruta}")
             self._log(
@@ -352,6 +354,7 @@ class AnalizadorApp:
                 self._log(f"⚠ {descartes['fechas_invalidas']:,} registros descartados por fecha inválida.")
             if descartes.get("duplicados"):
                 self._log(f"⚠ {descartes['duplicados']:,} registros duplicados descartados.")
+            self._informar_columnas(df.attrs.get("columnas", {}))
             if descartes.get("horas_invalidas"):
                 self._log(f"⚠ {descartes['horas_invalidas']:,} registros sin hora interpretable (no entran en el mapa horario).")
             self._estado("Archivo cargado correctamente.")
@@ -360,18 +363,34 @@ class AnalizadorApp:
             self._mostrar_alerta("Error al cargar", str(ex))
             self._estado("Error al cargar el archivo.")
 
+    def _informar_columnas(self, columnas: dict):
+        """Qué columnas de la planilla se usaron y qué datos no trae."""
+        otras = [f"{campo} = «{original}»" for campo, original in columnas.items()
+                 if original.strip().lower() != campo]
+        if otras:
+            self._log("   Columnas reconocidas: " + ", ".join(otras))
+        tiene = set(columnas)
+        if "delito" in tiene:
+            tiene.add("tipo_delito")
+        if "coordenadas" in tiene:
+            tiene.add("latitud")
+        faltan = [nombre for campo, nombre in [
+            ("hora", "hora"), ("jurisdiccion", "comisaría"), ("tipo_delito", "delito"), ("latitud", "coordenadas"),
+        ] if campo not in tiene]
+        if faltan:
+            self._log(f"⚠ La planilla no tiene columna de {', '.join(faltan)}: esos datos no se van a poder analizar.")
+
     def _abrir_filtros(self, e=None):
         if self.df_original is None:
             self._mostrar_alerta("Sin datos", "Primero cargá un archivo.")
             return
 
         df = self.df_original
-        col_delito = "delito" if "delito" in df.columns else "tipo_delito"
 
         # Opciones
         anios = ["(todos)"] + [str(a) for a in sorted(df["anio"].unique().tolist())]
         juris = sorted(df["jurisdiccion"].unique().tolist())
-        tipos = sorted(df[col_delito].unique().tolist())
+        tipos = sorted(df[col_delito(df)].unique().tolist())
 
         dd_anio = ft.Dropdown(
             options=[ft.DropdownOption(key=a, text=a) for a in anios],
@@ -460,7 +479,7 @@ class AnalizadorApp:
 
                 self._log(f"✓ {len(self.rutas_graficos)} gráficos generados.")
                 self._estado(f"{len(self.rutas_graficos)} gráficos generados.")
-                self._mostrar_graficos_en_ui()
+                self._mostrar_graficos_en_ui(df)
                 self._mostrar_alerta("Gráficos", f"Se generaron {len(self.rutas_graficos)} gráficos. Están en la pestaña Gráficos.")
             except Exception as ex:
                 self._log(f"✗ Error: {ex}")
@@ -471,84 +490,93 @@ class AnalizadorApp:
         threading.Thread(target=tarea, daemon=True).start()
 
     async def _exportar_pdf(self, e=None):
-        if self._generando:
-            self._mostrar_alerta("Gráficos en curso", "Esperá a que terminen de generarse los gráficos.")
-            return
-        if not self.rutas_graficos:
-            self._mostrar_alerta("Sin gráficos", "Generá los gráficos primero.")
+        if self.df_filtrado is None:
+            self._mostrar_alerta("Sin datos", "Primero cargá un archivo.")
             return
 
-        # Se toman juntos para que el resumen y los gráficos sean de los mismos datos
         df = self.df_filtrado
-        rutas = dict(self.rutas_graficos)
-
         ruta = await ft.FilePicker().save_file(
-            dialog_title="Guardar reporte PDF como…",
+            dialog_title="Guardar informe PDF como…",
             file_name=nombre_reporte(),
             initial_directory=str(carpeta_documentos()),
             file_type=ft.FilePickerFileType.CUSTOM,
             allowed_extensions=["pdf"],
         )
+        ruta = self._con_extension(ruta, ".pdf")
         if not ruta:
             return
-        elegida = Path(ruta)
-        ruta = elegida
-        if ruta.suffix.lower() != ".pdf":
-            # Se agrega la extensión sin tocar el nombre ("informe v1.2" → "informe v1.2.pdf")
-            ruta = ruta.with_name(ruta.name + ".pdf")
-            if ruta.exists():
-                # El diálogo confirmó sobrescribir "elegida", no este otro archivo
-                self._mostrar_alerta("El archivo ya existe", f"Ya existe {ruta.name} en esa carpeta. Elegí otro nombre.")
-                return
 
-        # Mientras el diálogo estuvo abierto pudieron cambiar los datos o los gráficos
-        if self._generando or df is not self.df_filtrado or rutas != self.rutas_graficos:
-            self._mostrar_alerta("Los datos cambiaron", "Generá los gráficos de nuevo antes de exportar.")
+        # Mientras el diálogo estuvo abierto pudieron cambiar el archivo o los filtros
+        if df is not self.df_filtrado:
+            self._mostrar_alerta("Los datos cambiaron", "Cambiaron los datos mientras elegías dónde guardar. Exportá de nuevo.")
             return
 
         self._estado("Generando PDF…")
         try:
-            ruta_pdf = await asyncio.to_thread(
-                lambda: generar_reporte(
-                    resumen_general(df), rutas, tabla_pivot(df),
-                    carpeta=ruta.parent, nombre=ruta.name,
-                )
-            )
+            ruta_pdf = await asyncio.to_thread(self._generar_pdf, df, ruta)
             self._log(f"✓ PDF generado: {ruta_pdf}")
             self._estado("PDF exportado correctamente.")
-            self._mostrar_alerta("PDF Exportado", f"Reporte guardado en:\n{ruta_pdf}")
+            self._mostrar_alerta("PDF Exportado", f"Informe guardado en:\n{ruta_pdf}")
         except Exception as ex:
             self._log(f"✗ Error PDF: {ex}")
             self._estado("Error al exportar el PDF.")
             self._mostrar_alerta("Error PDF", str(ex))
+
+    def _generar_pdf(self, df, ruta: Path) -> Path:
+        try:
+            return exportar_informe(df, ruta)
+        except NavegadorNoEncontrado:
+            # Sin Edge ni Chrome no se puede imprimir el informe: va el reporte simple
+            self._log("⚠ No se encontró Edge ni Chrome: se generó el reporte simple.")
+            with tempfile.TemporaryDirectory(dir=carpeta_app(), prefix="reporte_") as temporal:
+                rutas = generar_todos(df, carpeta=temporal)
+                return Path(generar_reporte(
+                    resumen_general(df), rutas, tabla_pivot(df), carpeta=ruta.parent, nombre=ruta.name,
+                ))
 
     async def _exportar_excel(self, e=None):
         if self.df_filtrado is None:
             self._mostrar_alerta("Sin datos", "Primero cargá un archivo.")
             return
 
+        df = self.df_filtrado
         ruta = await ft.FilePicker().save_file(
             dialog_title="Guardar datos filtrados como…",
             file_name="reporte_denuncias.xlsx",
+            initial_directory=str(carpeta_documentos()),
             file_type=ft.FilePickerFileType.CUSTOM,
             allowed_extensions=["xlsx"],
         )
+        ruta = self._con_extension(ruta, ".xlsx")
         if not ruta:
             return
 
+        self._estado("Exportando Excel…")
         try:
-            pivot = tabla_pivot(self.df_filtrado)
-            with pd.ExcelWriter(ruta, engine="openpyxl") as writer:
-                self.df_filtrado.drop(
-                    columns=[c for c in ["hora_dt", "franja"] if c in self.df_filtrado.columns],
-                    errors="ignore",
-                ).to_excel(writer, sheet_name="Denuncias", index=False)
-                pivot.to_excel(writer, sheet_name="Pivot")
-
+            # En un hilo: con archivos grandes escribir el Excel congelaría la ventana
+            await asyncio.to_thread(exportar_excel, df, ruta)
             self._log(f"✓ Excel exportado: {ruta}")
+            self._estado("Excel exportado correctamente.")
             self._mostrar_alerta("Excel", f"Archivo guardado en:\n{ruta}")
         except Exception as ex:
+            self._log(f"✗ Error Excel: {ex}")
+            self._estado("Error al exportar el Excel.")
             self._mostrar_alerta("Error Excel", str(ex))
+
+    def _con_extension(self, ruta, extension: str):
+        """Ruta elegida en el diálogo con su extensión, o None si se canceló o no se puede usar.
+        La extensión se agrega sin tocar el nombre ("informe v1.2" → "informe v1.2.pdf")."""
+        if not ruta:
+            return None
+        ruta = Path(ruta)
+        if ruta.suffix.lower() == extension:
+            return ruta
+        ruta = ruta.with_name(ruta.name + extension)
+        if ruta.exists():
+            # El diálogo confirmó sobrescribir el archivo elegido, no este otro
+            self._mostrar_alerta("El archivo ya existe", f"Ya existe {ruta.name} en esa carpeta. Elegí otro nombre.")
+            return None
+        return ruta
 
     def _limpiar_datos(self, e=None):
         if self.df_original is None:
@@ -605,9 +633,9 @@ class AnalizadorApp:
     def _acerca_de(self, e=None):
         self._mostrar_alerta(
             "Acerca de",
-            f"{NOMBRE_VISIBLE} v1.1 — {LEMA}\n\n"
+            f"{NOMBRE_VISIBLE} v{VERSION} — {LEMA}\n\n"
             "Sistema de análisis estadístico de denuncias.\n"
-            "Desarrollado con Python · Flet · pandas · matplotlib · seaborn\n\n"
+            "Desarrollado con Python · Flet · pandas · matplotlib\n\n"
             "Proyecto anual — Prácticas Profesionalizantes",
         )
 
@@ -650,8 +678,6 @@ class AnalizadorApp:
         self.container_tabla.controls = [
             ft.Row(controls=[dt], scroll=ft.ScrollMode.ALWAYS)
         ]
-
-        self._cargar_mapa(df)
 
     def _cargar_mapa(self, df):
         if "latitud" in df.columns and "longitud" in df.columns:
@@ -697,35 +723,8 @@ class AnalizadorApp:
             self._log(f"✗ Error mapa: {ex}")
             self._mostrar_alerta("Error al generar el mapa", str(ex))
 
-    def _mostrar_graficos_en_ui(self):
-        ORDEN = [
-                "donut", "serie_temporal", "barras_tipo",
-                "barras_jurisdiccion", "heatmap_horario",
-                "ranking_jurisdiccion", "comparacion_anual",
-        ]
-
-        elementos = []
-        for nombre in ORDEN:
-            if nombre in self.rutas_graficos:
-                # Se lee el archivo y se pasan los bytes: así no depende de rutas/assets de Flet
-                with open(self.rutas_graficos[nombre], "rb") as f:
-                    datos_img = f.read()
-                img = ft.Image(
-                    src=datos_img,
-                    fit=ft.BoxFit.CONTAIN,
-                    border_radius=ft.BorderRadius.all(8),
-                )
-                card_img = ft.Container(
-                    content=img,
-                    bgcolor=C["panel"],
-                    padding=16,
-                    border_radius=ft.BorderRadius.all(8),
-                    border=ft.Border.all(1, C["borde"]),
-                    margin=ft.Margin.only(bottom=12),
-                )
-                elementos.append(card_img)
-
-        self.col_graficos.controls = elementos
+    def _mostrar_graficos_en_ui(self, df):
+        self.col_graficos.controls = [tablero(df)]
         self.page.update()
 
     def aplicar_filtros(self, kwargs: dict):
@@ -745,6 +744,7 @@ class AnalizadorApp:
             self._invalidar_graficos()
             self._actualizar_metricas(df)
             self._poblar_tabla(df)
+            self._cargar_mapa(df)
             self._log(f"✓ Filtros aplicados — {len(df):,} registros.")
             self._estado(f"Filtros activos · {len(df):,} registros.")
             self.page.update()
