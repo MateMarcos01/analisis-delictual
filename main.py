@@ -24,7 +24,7 @@ matplotlib.use("Agg")
 from modulos.procesador import cargar_excel, col_delito, resumen_general, filtrar, tabla_pivot
 from modulos.graficos_app import tablero
 from modulos.exportador import exportar_excel, exportar_pdf, nombre_reporte
-from modulos.informe import _n
+from modulos.informe import NavegadorNoEncontrado, _n, exportar_mapa
 from modulos.mapa import generar_mapa_html, puntos_validos
 from modulos.marca import ICONO_VENTANA, LEMA, LOGO, NOMBRE_VISIBLE, VERSION
 from modulos.rutas import carpeta_app, carpeta_documentos, carpeta_logs, ruta_mapa
@@ -548,6 +548,41 @@ class AnalizadorApp:
             self._estado("Error al exportar el PDF.")
             self._mostrar_alerta("Error PDF", str(ex))
 
+    async def _exportar_mapa(self, e=None):
+        if self.df_filtrado is None:
+            self._mostrar_alerta("Sin datos", "Primero cargá un archivo.")
+            return
+
+        df = self.df_filtrado
+        ruta = await ft.FilePicker().save_file(
+            dialog_title="Guardar mapa PDF como…",
+            file_name=nombre_reporte("mapa_delictual"),
+            initial_directory=str(carpeta_documentos()),
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["pdf"],
+        )
+        ruta = self._con_extension(ruta, ".pdf")
+        if not ruta:
+            return
+        if df is not self.df_filtrado:
+            self._mostrar_alerta("Los datos cambiaron", "Cambiaron los datos mientras elegías dónde guardar. Exportá de nuevo.")
+            return
+
+        self._estado("Generando mapa PDF…")
+        try:
+            ruta_pdf = await asyncio.to_thread(exportar_mapa, df, ruta)
+            self._log(f"✓ Mapa PDF generado: {ruta_pdf}")
+            self._estado("Mapa PDF exportado correctamente.")
+            self._mostrar_alerta("Mapa exportado", f"Mapa guardado en:\n{ruta_pdf}")
+        except NavegadorNoEncontrado:
+            # El mapa lo imprime el navegador: no hay versión simple como con el informe
+            self._estado("Error al exportar el mapa.")
+            self._mostrar_alerta("Error al exportar el mapa", "Hace falta Microsoft Edge o Google Chrome para imprimir el mapa.")
+        except Exception as ex:
+            self._log(f"✗ Error mapa PDF: {ex}")
+            self._estado("Error al exportar el mapa.")
+            self._mostrar_alerta("Error al exportar el mapa", str(ex))
+
     def _generar_pdf(self, df, ruta: Path) -> Path:
         ruta_pdf, simple = exportar_pdf(df, ruta)
         if simple:
@@ -708,11 +743,22 @@ class AnalizadorApp:
                         size=14,
                         weight=ft.FontWeight.BOLD,
                     ),
-                    ft.Button(
-                        content="Abrir mapa en el navegador",
-                        icon=ft.Icons.OPEN_IN_BROWSER,
-                        style=ft.ButtonStyle(bgcolor=C["primary"], color="white"),
-                        on_click=self._abrir_mapa,
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=12,
+                        controls=[
+                            ft.Button(
+                                content="Abrir mapa en el navegador",
+                                icon=ft.Icons.OPEN_IN_BROWSER,
+                                style=ft.ButtonStyle(bgcolor=C["primary"], color="white"),
+                                on_click=self._abrir_mapa,
+                            ),
+                            ft.OutlinedButton(
+                                content="Exportar mapa en PDF",
+                                icon=ft.Icons.PICTURE_AS_PDF,
+                                on_click=self._exportar_mapa,
+                            ),
+                        ],
                     ),
                 ],
             )

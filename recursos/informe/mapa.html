@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Mapa de hechos · {{ emitido }}</title>
+  <base href="{{ base }}">
+  <link rel="stylesheet" href="vendor/fuentes/fuentes.css">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="informe.css">
+  <style>
+    /* Una sola hoja apaisada: 297 − 2 × 12 mm de ancho */
+    @page { size: A4 landscape; margin: 12mm 12mm 14mm; @bottom-left { content: "{{ pie }} · Mapa de hechos"; } @bottom-right { content: none; } }
+    :root { --ancho: 273mm; }
+    .map { height: 140mm; margin-top: 3mm; }
+    .periodo { margin: 1.5mm 0 0; color: var(--ink-soft); font-size: 9pt; }
+    .leyenda { display: flex; flex-wrap: wrap; align-items: center; gap: 1.5mm 6mm; margin-top: 2mm; color: var(--ink-soft); font-size: 8pt; }
+    .leyenda .swatch { width: 2.6mm; height: 2.6mm; border: .5pt solid #fff; border-radius: 50%; }
+  </style>
+</head>
+<body>
+  <header class="title-block">
+    <h1>Mapa de hechos</h1>
+    <p class="emitido">Emitido el {{ emitido }}</p>
+  </header>
+  <p class="periodo">Del {{ desde }} al {{ hasta }} · {{ con_coordenadas|n }} {{ "hecho" if con_coordenadas == 1 else "hechos" }} con coordenadas{% if sin_coordenadas %} ({{ sin_coordenadas|n }} sin coordenadas válidas no figuran){% endif %}.</p>
+
+  <div id="mapa" class="map"></div>
+
+  <div class="leyenda">
+    {% for delito in delitos %}<span><i class="swatch" style="background: {{ delito.color }}"></i> {{ delito.nombre }} ({{ delito.cantidad|n }})</span>{% endfor %}
+  </div>
+
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/leaflet-heat.js"></script>
+  <script src="mapa.js"></script>
+  <script>
+    dibujarMapa(document.getElementById('mapa'), {{ calor|tojson }}, {{ puntos|tojson }});
+  </script>
+</body>
+</html>

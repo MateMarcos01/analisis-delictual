@@ -14,8 +14,9 @@ Proyecto anual — Prácticas Profesionalizantes.
 - Gráficos estadísticos (barras, evolución mensual, donut, ranking, comparación anual)
 - **Mapa de calor horario** por día de la semana
 - **Mapa interactivo** de los puntos georreferenciados (se abre en el navegador)
-- Filtros por año, jurisdicción y delito
-- Exportación a **PDF** con reporte completo
+- Filtros por año, rango de fechas, jurisdicción y delito
+- Exportación a **PDF** con reporte completo (textos, mapa de calor, tablas y gráficos)
+- Exportación del **mapa en una hoja A4 apaisada**, con los puntos coloreados por delito
 - Exportación a **Excel** con datos filtrados + tabla pivot
 - Botón **Limpiar datos** para quitar el archivo cargado y empezar con otro
 - Interfaz gráfica de escritorio (**Flet**)
@@ -84,15 +85,24 @@ no se versionan (ver `.gitignore`).
 python -m pytest
 ```
 
-### Generar el ejecutable
+### Generar el instalador
+
+Requiere [Inno Setup 6](https://jrsoftware.org/isdl.php) y las dependencias de desarrollo.
 
 ```powershell
-flet pack main.py -D -y --name AnalizadorDelictual --icon Iconos\vistana_logo.ico --add-data "Iconos:Iconos" "recursos:recursos" --product-name Vistana --product-version 1.1
+powershell -ExecutionPolicy Bypass -File instalador\construir.ps1
 ```
 
-Deja la aplicación en `dist\AnalizadorDelictual\`. `--add-data` es necesario: sin `Iconos`
-la ventana sale sin logo, y sin `recursos` no se puede generar el informe PDF. `flet pack`
-regenera el `.spec` en cada corrida, por eso no se versiona.
+Empaqueta la app con `flet pack` en `dist\AnalizadorDelictual\` y genera
+`instalador\salida\Vistana-<versión>-instalador.exe`, que es lo único que hay que llevar a
+otra PC. La versión sale de `VERSION` en `modulos\marca.py`: subila antes de generar una
+versión nueva para que el instalador reemplace a la anterior.
+
+El instalador no pide permisos de administrador: instala para el usuario actual en
+`%LOCALAPPDATA%\Programs\Vistana` (con permisos de administrador ofrece instalar para todos),
+crea el acceso en el menú Inicio y, si se elige, en el escritorio. Se desinstala desde
+Configuración → Aplicaciones; eso borra también la carpeta de trabajo, pero no los PDF y
+Excel exportados.
 
 El informe PDF lo imprime Microsoft Edge (viene con Windows 10 y 11) o Google Chrome, sin
 abrir ninguna ventana. Si la computadora no tiene ninguno de los dos, se genera un reporte

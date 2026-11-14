@@ -154,3 +154,35 @@ def test_si_un_navegador_falla_se_prueba_el_siguiente(tmp_path):
     if buscar_navegadores():
         ruta = exportar_informe(_df(), tmp_path / "b.pdf", navegadores=[roto, *buscar_navegadores()])
         assert ruta.read_bytes().startswith(b"%PDF")
+
+
+def _df_con_coordenadas():
+    df = _df()
+    df["latitud"] = [-31.53 - i / 1000 for i in range(len(df))]
+    df["longitud"] = -68.53
+    df.loc[0, "latitud"] = None   # sin coordenadas: no entra en el mapa
+    return df
+
+
+def test_la_hoja_de_mapa_trae_puntos_y_leyenda_por_delito():
+    import pytest
+    from modulos.informe import construir_mapa, html_informe
+    mapa = construir_mapa(_df_con_coordenadas())
+    assert mapa["con_coordenadas"] == 59 and mapa["sin_coordenadas"] == 1
+    assert [d["nombre"] for d in mapa["delitos"]] == ["Robo", "Hurto", "Ttva Robo"]
+    assert sum(d["cantidad"] for d in mapa["delitos"]) == len(mapa["puntos"]) == 59
+    pagina = html_informe(mapa, "mapa.html")
+    assert "Mapa de hechos" in pagina and "A4 landscape" in pagina
+    with pytest.raises(ValueError):
+        construir_mapa(_df())   # sin columnas de coordenadas
+
+
+def test_la_hoja_de_mapa_se_imprime_en_una_pagina(tmp_path):
+    import re
+    import pytest
+    from modulos.informe import buscar_navegadores, exportar_mapa
+    if not buscar_navegadores():
+        pytest.skip("No hay Edge ni Chrome en esta computadora")
+    contenido = exportar_mapa(_df_con_coordenadas(), tmp_path / "mapa.pdf").read_bytes()
+    assert contenido.startswith(b"%PDF")
+    assert len(re.findall(rb"/Type\s*/Page[^s]", contenido)) == 1

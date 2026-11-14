@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from modulos.graficos import COLOR_RESTO, DIAS_ES, _color_delito, matriz_horaria
+from modulos.graficos import COLOR_RESTO, DIAS_ES, _color_delito, matriz_horaria, orden_delito
 from modulos.mapa import puntos_validos
 from modulos.marca import NOMBRE_VISIBLE
 from modulos.procesador import col_delito
@@ -115,9 +115,7 @@ def _datos(df: pd.DataFrame) -> dict:
     }
     horario["sin_hora"] = len(df) - horario["total"]
 
-    # Un punto por ubicación, con la cantidad de hechos que caen ahí
-    puntos = pd.DataFrame(puntos_validos(df), columns=["lat", "lon"])
-    por_lugar = puntos.round(5).value_counts().reset_index(name="cantidad")
+    puntos = puntos_validos(df)
 
     return {
         "delitos": delitos,
@@ -128,9 +126,15 @@ def _datos(df: pd.DataFrame) -> dict:
         "meses": mensual.index.tolist(),
         "mensual": [int(v) for v in mensual],
         "horario": horario,
-        "puntos": por_lugar[["lat", "lon", "cantidad"]].values.tolist(),
+        "puntos": _calor(puntos),
         "con_coordenadas": len(puntos),
     }
+
+
+def _calor(puntos: list[dict]) -> list:
+    """Un elemento por ubicación, con la cantidad de hechos que caen ahí: [lat, lon, cantidad]."""
+    tabla = pd.DataFrame(puntos, columns=["lat", "lon"])
+    return tabla.round(5).value_counts().reset_index(name="cantidad").values.tolist()
 
 
 # ─── Redacción por sección ────────────────────────────────────────────────────
@@ -301,8 +305,8 @@ def construir_informe(df: pd.DataFrame, hoy: date | None = None) -> dict:
     return informe
 
 
-def html_informe(informe: dict) -> str:
-    """La página del informe, lista para imprimir."""
+def html_informe(informe: dict, plantilla: str = "informe.html") -> str:
+    """La página del informe (o de la hoja de mapa), lista para imprimir."""
     entorno = Environment(
         loader=FileSystemLoader(CARPETA_PLANTILLA),
         autoescape=select_autoescape(["html"]),
@@ -310,7 +314,31 @@ def html_informe(informe: dict) -> str:
     entorno.filters["n"] = _n
     # Las bibliotecas y fuentes se cargan desde la carpeta de la plantilla
     base = CARPETA_PLANTILLA.as_uri() + "/"
-    return entorno.get_template("informe.html").render(base=base, **informe)
+    return entorno.get_template(plantilla).render(base=base, **informe)
+
+
+# ─── Hoja de mapa ─────────────────────────────────────────────────────────────
+
+def construir_mapa(df: pd.DataFrame, hoy: date | None = None) -> dict:
+    """Datos de la hoja de mapa: calor, puntos con el color de su delito y leyenda."""
+    puntos = puntos_validos(df)
+    if not puntos:
+        raise ValueError("No hay hechos con coordenadas válidas para dibujar el mapa.")
+    conteo = pd.Series([p["tipo"] for p in puntos]).value_counts()
+    return {
+        "emitido": (hoy or date.today()).strftime("%d/%m/%Y"),
+        "pie": NOMBRE_VISIBLE,
+        "desde": df["fecha"].min().strftime("%d/%m/%Y"),
+        "hasta": df["fecha"].max().strftime("%d/%m/%Y"),
+        "con_coordenadas": len(puntos),
+        "sin_coordenadas": len(df) - len(puntos),
+        "calor": _calor(puntos),
+        "puntos": [[p["lat"], p["lon"], _color_delito(p["tipo"])] for p in puntos],
+        "delitos": [
+            {"nombre": d, "cantidad": int(conteo[d]), "color": _color_delito(d)}
+            for d in sorted(conteo.index, key=orden_delito)
+        ],
+    }
 
 
 # ─── PDF ──────────────────────────────────────────────────────────────────────
@@ -334,10 +362,20 @@ def exportar_informe(df: pd.DataFrame, ruta_pdf, navegadores: list[str] | None =
     fallar, por ejemplo, mientras se actualiza). Lanza NavegadorNoEncontrado si
     ninguno pudo.
     """
+    return _imprimir(html_informe(construir_informe(df)), ruta_pdf, navegadores)
+
+
+def exportar_mapa(df: pd.DataFrame, ruta_pdf, navegadores: list[str] | None = None) -> Path:
+    """La hoja de mapa en PDF (A4 apaisada). Lanza ValueError si no hay coordenadas
+    y NavegadorNoEncontrado si ningún navegador pudo imprimirla."""
+    return _imprimir(html_informe(construir_mapa(df), "mapa.html"), ruta_pdf, navegadores)
+
+
+def _imprimir(html: str, ruta_pdf, navegadores: list[str] | None) -> Path:
+    """Imprime la página a PDF con Edge o Chrome sin ventana."""
     navegadores = navegadores if navegadores is not None else buscar_navegadores()
     ruta_pdf = Path(ruta_pdf).resolve()
     ruta_pdf.parent.mkdir(parents=True, exist_ok=True)
-
     # La página tiene los datos de las denuncias: se escribe en una carpeta
     # temporal y se borra al terminar. Perfil propio del navegador: no toca
     # las pestañas ni la sesión que el usuario tenga abiertas. Un proceso del
@@ -345,7 +383,7 @@ def exportar_informe(df: pd.DataFrame, ruta_pdf, navegadores: list[str] | None =
     # eso no debe hacer fallar la exportación.
     with tempfile.TemporaryDirectory(dir=carpeta_app(), prefix="informe_", ignore_cleanup_errors=True) as temporal:
         pagina = Path(temporal) / "informe.html"
-        pagina.write_text(html_informe(construir_informe(df)), encoding="utf-8")
+        pagina.write_text(html, encoding="utf-8")
         destino = Path(temporal) / "informe.pdf"
         for i, navegador in enumerate(navegadores):
             try:
@@ -365,4 +403,4 @@ def exportar_informe(df: pd.DataFrame, ruta_pdf, navegadores: list[str] | None =
                 # Se escribe recién al final: un error no deja un PDF a medias en el destino
                 shutil.move(str(destino), ruta_pdf)
                 return ruta_pdf
-    raise NavegadorNoEncontrado("Ni Microsoft Edge ni Google Chrome pudieron generar el informe.")
+    raise NavegadorNoEncontrado("Ni Microsoft Edge ni Google Chrome pudieron generar el PDF.")

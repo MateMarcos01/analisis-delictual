@@ -101,45 +101,13 @@
   <script src="vendor/leaflet.js"></script>
   <script src="vendor/leaflet-heat.js"></script>
   <script src="vendor/chart.umd.min.js"></script>
+  <script src="mapa.js"></script>
   <script>
     const graficos = {{ graficos|tojson }};
     const puntos = {{ puntos|tojson }};
 
-    // Mapa: solo calor, encuadrado en el grueso de los hechos. Sin animaciones:
-    // el navegador imprime apenas termina de cargar.
     const elementoMapa = document.getElementById('mapa');
-    if (elementoMapa) {
-      const map = L.map(elementoMapa, {
-        zoomControl: false, zoomSnap: 0.25, fadeAnimation: false, zoomAnimation: false, markerZoomAnimation: false,
-      }).setView([-31.52, -68.52], 11);
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
-
-      // Unos pocos puntos muy alejados (a menudo coordenadas mal cargadas)
-      // achicarían todo el mapa: se encuadra entre el 2 % y el 98 %
-      const cuantil = (valores, q) => valores[Math.min(valores.length - 1, Math.floor(q * valores.length))];
-      const latitudes = puntos.map(p => p[0]).sort((a, b) => a - b);
-      const longitudes = puntos.map(p => p[1]).sort((a, b) => a - b);
-      map.fitBounds([
-        [cuantil(latitudes, 0.02), cuantil(longitudes, 0.02)],
-        [cuantil(latitudes, 0.98), cuantil(longitudes, 0.98)],
-      ], { padding: [14, 14], maxZoom: 16 });
-
-      // Escala del calor según lo que se ve: el rojo queda para lo más concentrado
-      const RADIO = 18, DIFUSION = 16, celda = RADIO + DIFUSION;
-      const porCelda = new Map();
-      let maximo = 1;
-      for (const [lat, lon, cantidad] of puntos) {
-        const pixel = map.project([lat, lon], map.getZoom());
-        const clave = Math.floor(pixel.x / celda) + ':' + Math.floor(pixel.y / celda);
-        const suma = (porCelda.get(clave) || 0) + cantidad;
-        porCelda.set(clave, suma);
-        maximo = Math.max(maximo, suma);
-      }
-      L.heatLayer(puntos, {
-        radius: RADIO, blur: DIFUSION, minOpacity: 0.12, maxZoom: 1, max: Math.max(1, maximo * 0.6),
-        gradient: { 0.25: '#00A63E', 0.55: '#FFD000', 0.8: '#FF7A00', 1: '#E60000' },
-      }).addTo(map);
-    }
+    if (elementoMapa) { dibujarMapa(elementoMapa, puntos); }
 
     // Gráficos sin animación: tienen que estar completos al imprimir
     const tinta = '#2B3442';

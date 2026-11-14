@@ -75,9 +75,9 @@ def _membrete(canvas, doc):
     canvas.restoreState()
 
 
-def nombre_reporte() -> str:
+def nombre_reporte(prefijo: str = "informe_delictual") -> str:
     """Nombre de archivo sugerido para un reporte nuevo."""
-    return f"informe_delictual_{datetime.now():%Y%m%d_%H%M%S}.pdf"
+    return f"{prefijo}_{datetime.now():%Y%m%d_%H%M%S}.pdf"
 
 
 def generar_reporte(

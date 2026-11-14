@@ -317,3 +317,21 @@ def test_el_dialogo_de_filtros_recuerda_lo_aplicado_y_filtra_por_fechas(app):
     hasta.value = "07/03/2025"
     dialogo.actions[0].on_click(None)
     assert hasta.error is None   # al corregirla, el aviso desaparece
+
+
+def test_el_mapa_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "exportar_mapa", _pdf_falso)
+    _elegir_destino(monkeypatch, str(tmp_path / "mapa"))
+    asyncio.run(app._exportar_mapa())
+    assert app.alertas == ["Mapa exportado"]
+    assert (tmp_path / "mapa.pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_sin_navegador_el_mapa_pdf_avisa(app, monkeypatch, tmp_path):
+    def sin_navegador(df, ruta):
+        raise main.NavegadorNoEncontrado("sin navegador")
+    monkeypatch.setattr(main, "exportar_mapa", sin_navegador)
+    _elegir_destino(monkeypatch, str(tmp_path / "mapa.pdf"))
+    asyncio.run(app._exportar_mapa())
+    assert app.alertas == ["Error al exportar el mapa"]
+    assert not (tmp_path / "mapa.pdf").exists()

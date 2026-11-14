@@ -7,7 +7,7 @@ from pathlib import Path
 
 NOMBRE_VISIBLE = "Vistana"
 LEMA = "De Excel a reportes PDF"
-VERSION = "1.1"
+VERSION = "1.2"
 
 CARPETA_ICONOS = Path(__file__).resolve().parent.parent / "Iconos"
 ICONO_VENTANA = CARPETA_ICONOS / "vistana_logo.ico"
