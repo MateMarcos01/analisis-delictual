@@ -5,9 +5,9 @@ Ejecutar con:
     python main.py
 """
 import asyncio
+import atexit
 import logging
-import tempfile
-import threading
+import shutil
 import webbrowser
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -16,16 +16,15 @@ from pathlib import Path
 import flet as ft
 import matplotlib
 
-# Backend sin ventana: los gráficos se generan en un hilo secundario
-# y ya no hay Tkinter, así que "Agg" es lo correcto.
+# Backend sin ventana: el reporte simple (sin navegador) dibuja sus gráficos
+# con matplotlib en un hilo secundario.
 matplotlib.use("Agg")
 
 # Importar módulos propios (Lógica de negocio intacta)
 from modulos.procesador import cargar_excel, col_delito, resumen_general, filtrar, tabla_pivot
-from modulos.graficos import generar_todos
 from modulos.graficos_app import tablero
-from modulos.exportador import exportar_excel, generar_reporte, nombre_reporte
-from modulos.informe import NavegadorNoEncontrado, exportar_informe
+from modulos.exportador import exportar_excel, exportar_pdf, nombre_reporte
+from modulos.informe import _n
 from modulos.mapa import generar_mapa_html, puntos_validos
 from modulos.marca import ICONO_VENTANA, LEMA, LOGO, NOMBRE_VISIBLE, VERSION
 from modulos.rutas import carpeta_app, carpeta_documentos, carpeta_logs, ruta_mapa
@@ -60,6 +59,27 @@ def configurar_registro():
         return
     archivo.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[archivo])
+
+
+def _borrar(rutas):
+    for ruta in rutas:
+        try:
+            if ruta.is_dir():
+                shutil.rmtree(ruta)
+            else:
+                ruta.unlink(missing_ok=True)
+        except OSError as ex:
+            logging.getLogger(__name__).warning("No se pudo borrar %s: %s", ruta, ex)
+
+
+def borrar_archivos_de_trabajo():
+    """Los archivos de trabajo contienen datos de las denuncias: no deben quedar en disco.
+    Incluye los gráficos PNG de versiones anteriores y las carpetas temporales del PDF
+    que el navegador no dejó borrar."""
+    # shortcut: con dos ventanas abiertas a la vez, una borra el mapa o el PDF en curso
+    # de la otra; si eso pasa a ser un caso real, usar una carpeta de trabajo por proceso.
+    carpeta = carpeta_app()
+    _borrar([ruta_mapa(), carpeta / "graficos", *carpeta.glob("informe_*"), *carpeta.glob("reporte_*")])
 
 # ─── Paleta de colores moderna ────────────────────────────────────────────────
 C = {
@@ -105,9 +125,8 @@ class AnalizadorApp:
         # Estado de los datos
         self.df_original = None
         self.df_filtrado = None
-        self.rutas_graficos = {}
+        self.graficos_visibles = False
         self.filtros_activos = {}
-        self._generando = False
 
         self._construir_ui()
         logging.getLogger("modulos").addHandler(_LogEnPantalla(self._log))
@@ -345,18 +364,18 @@ class AnalizadorApp:
 
             self._log(f"✓ Archivo cargado: {ruta}")
             self._log(
-                f"   {len(self.df_filtrado):,} registros · "
+                f"   {_n(len(self.df_filtrado))} registros · "
                 f"{self.df_filtrado['tipo_delito'].nunique()} tipos · "
                 f"{self.df_filtrado['jurisdiccion'].nunique()} jurisdicciones"
             )
             descartes = df.attrs.get("descartes", {})
             if descartes.get("fechas_invalidas"):
-                self._log(f"⚠ {descartes['fechas_invalidas']:,} registros descartados por fecha inválida.")
+                self._log(f"⚠ {_n(descartes['fechas_invalidas'])} registros descartados por fecha inválida.")
             if descartes.get("duplicados"):
-                self._log(f"⚠ {descartes['duplicados']:,} registros duplicados descartados.")
+                self._log(f"⚠ {_n(descartes['duplicados'])} registros duplicados descartados.")
             self._informar_columnas(df.attrs.get("columnas", {}))
             if descartes.get("horas_invalidas"):
-                self._log(f"⚠ {descartes['horas_invalidas']:,} registros sin hora interpretable (no entran en el mapa horario).")
+                self._log(f"⚠ {_n(descartes['horas_invalidas'])} registros sin hora interpretable (no entran en el mapa horario).")
             self._estado("Archivo cargado correctamente.")
             self.page.update()
         except Exception as ex:
@@ -386,6 +405,8 @@ class AnalizadorApp:
             return
 
         df = self.df_original
+        # El diálogo abre con los filtros que ya están aplicados
+        activos = self.filtros_activos
 
         # Opciones
         anios = ["(todos)"] + [str(a) for a in sorted(df["anio"].unique().tolist())]
@@ -394,19 +415,42 @@ class AnalizadorApp:
 
         dd_anio = ft.Dropdown(
             options=[ft.DropdownOption(key=a, text=a) for a in anios],
-            value="(todos)",
+            value=str(activos.get("anio", "(todos)")),
             label="Año",
             width=300,
         )
 
+        def campo_fecha(clave, etiqueta):
+            valor = activos.get(clave)
+            return ft.TextField(
+                label=etiqueta, hint_text="DD/MM/AAAA", width=145,
+                value=valor.strftime("%d/%m/%Y") if valor else "",
+            )
+
+        txt_desde = campo_fecha("fecha_desde", "Desde")
+        txt_hasta = campo_fecha("fecha_hasta", "Hasta")
+
         # Checkboxes para multi-selección limpia
-        chk_juris = [ft.Checkbox(label=j, value=False) for j in juris]
-        chk_tipos = [ft.Checkbox(label=t, value=False) for t in tipos]
+        chk_juris = [ft.Checkbox(label=j, value=j in activos.get("jurisdicciones", [])) for j in juris]
+        chk_tipos = [ft.Checkbox(label=t, value=t in activos.get("tipos_delito", [])) for t in tipos]
 
         def aplicar_and_close(ev):
             kwargs = {}
             if dd_anio.value != "(todos)":
                 kwargs["anio"] = int(dd_anio.value)
+
+            for clave, campo in (("fecha_desde", txt_desde), ("fecha_hasta", txt_hasta)):
+                texto = (campo.value or "").strip()
+                campo.error = None   # el error de un intento anterior ya no corresponde
+                if not texto:
+                    continue
+                try:
+                    # Formato explícito: pandas leería «04/01/2025» como 1 de abril
+                    kwargs[clave] = datetime.strptime(texto, "%d/%m/%Y")
+                except ValueError:
+                    campo.error = "Usar DD/MM/AAAA"
+                    self.page.update()
+                    return
 
             sel_j = [c.label for c in chk_juris if c.value]
             if sel_j:
@@ -432,6 +476,7 @@ class AnalizadorApp:
                     scroll=ft.ScrollMode.AUTO,
                     controls=[
                         dd_anio,
+                        ft.Row(controls=[txt_desde, txt_hasta], spacing=10),
                         ft.Text("Jurisdicciones:", weight=ft.FontWeight.BOLD, size=12),
                         ft.Column(controls=chk_juris, spacing=0),
                         ft.Text("Delito:", weight=ft.FontWeight.BOLD, size=12),
@@ -458,36 +503,17 @@ class AnalizadorApp:
             self._mostrar_alerta("Sin datos", "Primero cargá un archivo.")
             return
 
-        if self._generando:
-            self._mostrar_alerta("Gráficos", "Ya se están generando los gráficos. Esperá a que terminen.")
+        # El tablero se dibuja con Flet a partir de los datos: no escribe nada en disco
+        try:
+            self.col_graficos.controls = [tablero(self.df_filtrado)]
+        except Exception as ex:
+            self._log(f"✗ Error: {ex}")
+            self._mostrar_alerta("Error", str(ex))
             return
-
-        self._generando = True
-        self._estado("Generando gráficos…")
-        self._log("Generando gráficos…")
-        df = self.df_filtrado
-
-        def tarea():
-            try:
-                rutas = generar_todos(df)
-                # Si mientras tanto cambió el filtro o el archivo, estos gráficos ya no sirven
-                if df is not self.df_filtrado:
-                    self._log("Los datos cambiaron mientras se generaban los gráficos; se descartaron.")
-                    self._estado("Los datos cambiaron. Generá los gráficos de nuevo.")
-                    return
-                self.rutas_graficos = rutas
-
-                self._log(f"✓ {len(self.rutas_graficos)} gráficos generados.")
-                self._estado(f"{len(self.rutas_graficos)} gráficos generados.")
-                self._mostrar_graficos_en_ui(df)
-                self._mostrar_alerta("Gráficos", f"Se generaron {len(self.rutas_graficos)} gráficos. Están en la pestaña Gráficos.")
-            except Exception as ex:
-                self._log(f"✗ Error: {ex}")
-                self._mostrar_alerta("Error", str(ex))
-            finally:
-                self._generando = False
-
-        threading.Thread(target=tarea, daemon=True).start()
+        self.graficos_visibles = True
+        self._log("✓ Gráficos generados.")
+        self._estado("Gráficos generados.")
+        self._mostrar_alerta("Gráficos", "Los gráficos están en la pestaña Gráficos.")
 
     async def _exportar_pdf(self, e=None):
         if self.df_filtrado is None:
@@ -523,16 +549,10 @@ class AnalizadorApp:
             self._mostrar_alerta("Error PDF", str(ex))
 
     def _generar_pdf(self, df, ruta: Path) -> Path:
-        try:
-            return exportar_informe(df, ruta)
-        except NavegadorNoEncontrado:
-            # Sin Edge ni Chrome no se puede imprimir el informe: va el reporte simple
+        ruta_pdf, simple = exportar_pdf(df, ruta)
+        if simple:
             self._log("⚠ No se encontró Edge ni Chrome: se generó el reporte simple.")
-            with tempfile.TemporaryDirectory(dir=carpeta_app(), prefix="reporte_") as temporal:
-                rutas = generar_todos(df, carpeta=temporal)
-                return Path(generar_reporte(
-                    resumen_general(df), rutas, tabla_pivot(df), carpeta=ruta.parent, nombre=ruta.name,
-                ))
+        return ruta_pdf
 
     async def _exportar_excel(self, e=None):
         if self.df_filtrado is None:
@@ -582,10 +602,6 @@ class AnalizadorApp:
         if self.df_original is None:
             self._mostrar_alerta("Sin datos", "No hay ningún archivo cargado.")
             return
-        if self._generando:
-            self._mostrar_alerta("Gráficos en curso", "Esperá a que terminen de generarse los gráficos.")
-            return
-
         def confirmar(ev):
             self.page.pop_dialog()
             self.limpiar_datos()
@@ -610,17 +626,12 @@ class AnalizadorApp:
 
     def limpiar_datos(self):
         """Deja la aplicación como recién abierta, lista para cargar otro archivo."""
-        # Los archivos de trabajo contienen datos de las denuncias: no deben quedar en disco
-        for ruta in [*self.rutas_graficos.values(), ruta_mapa()]:
-            try:
-                Path(ruta).unlink(missing_ok=True)
-            except OSError as ex:
-                logging.getLogger(__name__).warning("No se pudo borrar %s: %s", ruta, ex)
+        _borrar([ruta_mapa()])
 
         self.df_original = None
         self.df_filtrado = None
         self.filtros_activos = {}
-        self.rutas_graficos = {}
+        self.graficos_visibles = False
 
         self.lbl_archivo.value = "Sin archivo cargado"
         for tarjeta in self.tarjetas.values():
@@ -636,6 +647,8 @@ class AnalizadorApp:
             f"{NOMBRE_VISIBLE} v{VERSION} — {LEMA}\n\n"
             "Sistema de análisis estadístico de denuncias.\n"
             "Desarrollado con Python · Flet · pandas · matplotlib\n\n"
+            "El fondo del mapa se descarga de OpenStreetMap: sus servidores ven qué zonas "
+            "se consultan, no las denuncias.\n\n"
             "Proyecto anual — Prácticas Profesionalizantes",
         )
 
@@ -653,7 +666,7 @@ class AnalizadorApp:
 
     def _actualizar_metricas(self, df):
         r = resumen_general(df)
-        self.tarjetas["total_denuncias"].value = f"{r['total_denuncias']:,}"
+        self.tarjetas["total_denuncias"].value = _n(r["total_denuncias"])
         self.tarjetas["delito_principal"].value = str(r["delito_principal"])
         self.tarjetas["jurisdiccion_top"].value = str(r["jurisdiccion_top"])
         self.tarjetas["mes_pico"].value = str(r["mes_pico"])
@@ -689,7 +702,8 @@ class AnalizadorApp:
                 controls=[
                     ft.Icon(ft.Icons.MAP, size=48, color=C["coral"]),
                     ft.Text(
-                        f"Mapa listo con {n:,} puntos georreferenciados.",
+                        f"Mapa listo con {_n(n)} puntos georreferenciados."
+                        + ("" if n == len(df) else f" {_n(len(df) - n)} no tienen coordenadas dentro de San Juan."),
                         color=C["coral"],
                         size=14,
                         weight=ft.FontWeight.BOLD,
@@ -723,10 +737,6 @@ class AnalizadorApp:
             self._log(f"✗ Error mapa: {ex}")
             self._mostrar_alerta("Error al generar el mapa", str(ex))
 
-    def _mostrar_graficos_en_ui(self, df):
-        self.col_graficos.controls = [tablero(df)]
-        self.page.update()
-
     def aplicar_filtros(self, kwargs: dict):
         if kwargs == self.filtros_activos:
             return  # mismo filtro que ya está aplicado: no hay nada que cambiar
@@ -745,19 +755,18 @@ class AnalizadorApp:
             self._actualizar_metricas(df)
             self._poblar_tabla(df)
             self._cargar_mapa(df)
-            self._log(f"✓ Filtros aplicados — {len(df):,} registros.")
-            self._estado(f"Filtros activos · {len(df):,} registros.")
+            self._log(f"✓ Filtros aplicados — {_n(len(df))} registros.")
+            self._estado(f"Filtros activos · {_n(len(df))} registros.")
             self.page.update()
         except Exception as ex:
             self._log(f"✗ Error al filtrar: {ex}")
             self._mostrar_alerta("Error al filtrar", str(ex))
 
     def _invalidar_graficos(self):
-        """Los gráficos generados corresponden a datos anteriores: se descartan
-        para que el PDF no mezcle un resumen nuevo con gráficos viejos."""
-        if not self.rutas_graficos:
+        """Los gráficos en pantalla corresponden a datos anteriores: se descartan."""
+        if not self.graficos_visibles:
             return
-        self.rutas_graficos = {}
+        self.graficos_visibles = False
         self.col_graficos.controls = [
             ft.Text("Los datos cambiaron. Generá los gráficos de nuevo.", color=C["muted"], size=13)
         ]
@@ -784,4 +793,7 @@ class AnalizadorApp:
 # ─── PUNTO DE ENTRADA DE LA APLICACIÓN ────────────────────────────────────────
 if __name__ == "__main__":
     configurar_registro()
+    # También al abrir: si la app se cerró de golpe, lo de la vez anterior quedó en disco
+    borrar_archivos_de_trabajo()
+    atexit.register(borrar_archivos_de_trabajo)
     ft.run(AnalizadorApp)

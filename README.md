@@ -37,6 +37,13 @@ Para desarrollar (tests y herramientas de empaquetado):
 pip install -r requirements-dev.txt
 ```
 
+Si falla compilando PyYAML (no tiene versión precompilada para Python 3.15 y pide Visual Studio),
+instalarlo antes sin su extensión en C:
+
+```powershell
+$env:PYYAML_FORCE_LIBYAML = "0"; pip install --no-binary pyyaml pyyaml
+```
+
 ---
 
 ## Uso
@@ -89,7 +96,12 @@ regenera el `.spec` en cada corrida, por eso no se versiona.
 
 El informe PDF lo imprime Microsoft Edge (viene con Windows 10 y 11) o Google Chrome, sin
 abrir ninguna ventana. Si la computadora no tiene ninguno de los dos, se genera un reporte
-más simple. El fondo del mapa del informe necesita conexión a internet.
+más simple.
+
+**Privacidad del mapa.** El fondo del mapa (calles) del mapa interactivo y del informe PDF se
+descarga de los servidores de OpenStreetMap. Esos servidores no reciben las denuncias, pero sí
+ven qué zonas y a qué zoom se piden, es decir, aproximadamente dónde se concentran los hechos.
+Sin conexión, los puntos se dibujan igual sobre un fondo gris.
 
 ---
 
@@ -119,8 +131,9 @@ analizador-delictual/
 ### Dónde se guardan los archivos
 
 - **PDF y Excel exportados**: donde el usuario elige en el diálogo "Guardar como".
-- **Archivos de trabajo de la interfaz** (gráficos, mapa y registro de errores):
-  `%LOCALAPPDATA%\AnalizadorDelictual`. Contienen datos de las denuncias cargadas.
+- **Archivos de trabajo de la interfaz** (mapa y registro de errores):
+  `%LOCALAPPDATA%\AnalizadorDelictual`. El mapa contiene datos de las denuncias: se borra con
+  "Limpiar datos" y al abrir y cerrar la aplicación. El registro de errores se conserva.
 - **Modo terminal**: carpeta `salidas\` del directorio actual, o la indicada con `--salida`.
 
 ---

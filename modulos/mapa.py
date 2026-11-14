@@ -101,6 +101,7 @@ def puntos_validos(df):
     datos = df.dropna(subset=["latitud", "longitud"])
     lat = datos["latitud"].map(_normalizar_coordenada).astype(float)
     lon = datos["longitud"].map(_normalizar_coordenada).astype(float)
+    # Rectángulo que contiene a San Juan: descarta coordenadas mal cargadas
     dentro = lat.between(-35, -28, inclusive="neither") & lon.between(-72, -65, inclusive="neither")
     datos, lat, lon = datos[dentro], lat[dentro], lon[dentro]
 
@@ -292,7 +293,8 @@ def generar_mapa_html(df, tipos=None, ruta=None) -> Path:
     todos = puntos_validos(df)
     if not todos:
         raise ValueError(
-            "No se encontraron coordenadas válidas dentro del rango esperado."
+            "No hay coordenadas válidas dentro de la provincia de San Juan "
+            "(latitud entre -35 y -28, longitud entre -72 y -65)."
         )
     puntos = todos if tipos is None else [p for p in todos if p["tipo"] in tipos]
 

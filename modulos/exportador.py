@@ -3,6 +3,7 @@ modulos/exportador.py
 Genera un reporte PDF con los gráficos y un resumen estadístico,
 y exporta a Excel los datos filtrados.
 """
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -19,8 +20,11 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.utils import ImageReader
 
+from modulos.graficos import generar_todos
+from modulos.informe import NavegadorNoEncontrado, exportar_informe
 from modulos.marca import LEMA, LOGO, NOMBRE_VISIBLE
-from modulos.procesador import tabla_pivot
+from modulos.procesador import resumen_general, tabla_pivot
+from modulos.rutas import carpeta_app
 
 ANCHO, ALTO = A4
 MARGEN      = 2 * cm
@@ -201,6 +205,23 @@ def generar_reporte(
 
     doc.build(story, onFirstPage=_membrete, onLaterPages=_membrete)
     return ruta_pdf
+
+
+def exportar_pdf(df: pd.DataFrame, ruta) -> tuple[Path, bool]:
+    """
+    El informe completo en 'ruta'. Sin Edge ni Chrome para imprimirlo, va el
+    reporte simple. Devuelve (ruta del PDF, si es el reporte simple).
+    """
+    ruta = Path(ruta)
+    try:
+        return exportar_informe(df, ruta), False
+    except NavegadorNoEncontrado:
+        # Los gráficos del reporte tienen datos de las denuncias: van a una carpeta temporal
+        with tempfile.TemporaryDirectory(dir=carpeta_app(), prefix="reporte_") as temporal:
+            rutas = generar_todos(df, carpeta=temporal)
+            return Path(generar_reporte(
+                resumen_general(df), rutas, tabla_pivot(df), carpeta=ruta.parent, nombre=ruta.name,
+            )), True
 
 
 def exportar_excel(df: pd.DataFrame, ruta) -> Path:

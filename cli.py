@@ -15,7 +15,7 @@ from pathlib import Path
 
 from modulos.procesador import cargar_excel, resumen_general, filtrar, tabla_pivot
 from modulos.graficos   import generar_todos
-from modulos.exportador import generar_reporte
+from modulos.exportador import exportar_pdf, nombre_reporte
 from modulos.marca      import NOMBRE_VISIBLE
 
 
@@ -91,7 +91,9 @@ def main():
     # 5. PDF
     if not args.sin_pdf:
         print("▶  Generando reporte PDF…")
-        ruta_pdf = generar_reporte(resumen, rutas, pivot, carpeta=salida / "reportes")
+        ruta_pdf, simple = exportar_pdf(df, salida / "reportes" / nombre_reporte())
+        if simple:
+            print("   ! No se encontró Edge ni Chrome: se generó el reporte simple.")
         print(f"   PDF: {ruta_pdf}\n")
 
     print("✓  Proceso completado.\n")

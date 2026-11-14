@@ -9,7 +9,7 @@ import pytest
 
 import cli
 import main
-from modulos import graficos, rutas
+from modulos import exportador, graficos, rutas
 from modulos.graficos import generar_todos
 from modulos.mapa import generar_mapa_html, tipos_disponibles
 from modulos.procesador import _limpiar
@@ -31,14 +31,14 @@ def app():
     app._mostrar_alerta = lambda titulo, mensaje: app.alertas.append(titulo)
     app.df_original = _datos()
     app.df_filtrado = app.df_original.copy()
-    app.rutas_graficos = {"donut": "donut.png"}
+    app.graficos_visibles = True
     return app
 
 
 def test_filtrar_invalida_los_graficos_anteriores(app):
     app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"]})
     assert len(app.df_filtrado) == 5
-    assert app.rutas_graficos == {}
+    assert not app.graficos_visibles
     assert app.tarjetas["total_denuncias"].value == "5"
 
 
@@ -58,8 +58,6 @@ def _pdf_falso(df, ruta):
 
 
 def test_el_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path):
-    # Sin graficos generados: el informe sale directo de los datos
-    app.rutas_graficos = {}
     destino = tmp_path / "mis reportes" / "informe"       # sin extensión
     _elegir_destino(monkeypatch, str(destino))
     asyncio.run(app._exportar_pdf())
@@ -69,7 +67,7 @@ def test_el_pdf_se_guarda_donde_elige_el_usuario(app, monkeypatch, tmp_path):
 
 
 def test_el_pdf_conserva_los_puntos_del_nombre(app, monkeypatch, tmp_path):
-    monkeypatch.setattr(main, "exportar_informe", _pdf_falso)
+    monkeypatch.setattr(exportador, "exportar_informe", _pdf_falso)
     _elegir_destino(monkeypatch, str(tmp_path / "informe v1.2"))
     asyncio.run(app._exportar_pdf())
     assert (tmp_path / "informe v1.2.pdf").exists()
@@ -120,8 +118,8 @@ def test_la_app_abre_aunque_no_se_pueda_crear_el_registro(monkeypatch, tmp_path)
 
 def test_sin_navegador_se_exporta_el_reporte_simple(app, monkeypatch, tmp_path):
     def sin_navegador(df, ruta):
-        raise main.NavegadorNoEncontrado("sin navegador")
-    monkeypatch.setattr(main, "exportar_informe", sin_navegador)
+        raise exportador.NavegadorNoEncontrado("sin navegador")
+    monkeypatch.setattr(exportador, "exportar_informe", sin_navegador)
     _elegir_destino(monkeypatch, str(tmp_path / "informe.pdf"))
     asyncio.run(app._exportar_pdf())
     assert app.alertas == ["PDF Exportado"]
@@ -163,62 +161,43 @@ def test_filtro_sin_resultados_no_cambia_el_estado(app):
     app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"], "tipos_delito": ["Hurto"]})
     assert app.alertas == ["Sin resultados"]
     assert app.df_filtrado is antes
-    assert app.rutas_graficos == {"donut": "donut.png"}
+    assert app.graficos_visibles
 
 
 def test_repetir_el_mismo_filtro_conserva_los_graficos(app):
     app.aplicar_filtros({})   # "Limpiar" sin haber filtrado nunca
-    assert app.rutas_graficos == {"donut": "donut.png"}
+    assert app.graficos_visibles
 
 
 def test_si_falla_el_refresco_igual_se_invalidan_los_graficos(app):
     app._poblar_tabla = MagicMock(side_effect=RuntimeError("falla de pantalla"))
     app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"]})
     assert app.alertas == ["Error al filtrar"]
-    assert app.rutas_graficos == {}
+    assert not app.graficos_visibles
 
 
-def test_no_se_generan_graficos_dos_veces_a_la_vez(app, monkeypatch):
-    lanzados = []
-    monkeypatch.setattr(main.threading, "Thread", lambda **kw: lanzados.append(kw) or MagicMock())
+def test_generar_graficos_dibuja_el_tablero_sin_escribir_en_disco(app, carpeta_de_trabajo):
+    app.graficos_visibles = False
     app._generar_graficos()
-    app._generar_graficos()
-    assert len(lanzados) == 1
+    assert app.graficos_visibles
     assert app.alertas == ["Gráficos"]
-
-
-def test_graficos_de_datos_que_ya_cambiaron_se_descartan(app, monkeypatch, tmp_path):
-    app.rutas_graficos = {}
-    tareas = []
-    monkeypatch.setattr(main.threading, "Thread", lambda **kw: tareas.append(kw["target"]) or MagicMock())
-    monkeypatch.setattr(main, "generar_todos", lambda df: {"donut": "donut.png"})
-
-    app._generar_graficos()
-    app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"]})   # cambia mientras se generan
-    tareas[0]()
-
-    assert app.rutas_graficos == {}
-    assert app._generando is False
+    assert not (carpeta_de_trabajo / "graficos").exists()
 
 
 def test_limpiar_deja_la_app_como_recien_abierta(app):
-    app.rutas_graficos = generar_todos(app.df_filtrado)
-    graficos_en_disco = [Path(r) for r in app.rutas_graficos.values()]
     df = app.df_filtrado.assign(latitud=-31.53, longitud=-68.53)
     mapa = generar_mapa_html(df)
     app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"]})
-    app.rutas_graficos = {g.stem: str(g) for g in graficos_en_disco}
     app.lbl_archivo.value = "denuncias.xlsx"
 
     app.limpiar_datos()
 
     assert app.df_original is None and app.df_filtrado is None
-    assert app.filtros_activos == {} and app.rutas_graficos == {}
+    assert app.filtros_activos == {} and not app.graficos_visibles
     assert app.lbl_archivo.value == "Sin archivo cargado"
     assert {t.value for t in app.tarjetas.values()} == {"—"}
     assert app.container_tabla.controls == []
     assert not mapa.exists()
-    assert not any(g.exists() for g in graficos_en_disco)
 
     asyncio.run(app._exportar_pdf())
     assert app.alertas == ["Sin datos"]
@@ -228,17 +207,26 @@ def test_limpiar_pide_confirmacion_y_no_toca_nada_hasta_aceptar(app):
     app._limpiar_datos()
     app.page.show_dialog.assert_called_once()
     assert app.df_original is not None
-    assert app.rutas_graficos == {"donut": "donut.png"}
+    assert app.graficos_visibles
 
 
-def test_limpiar_sin_archivo_o_con_graficos_en_curso_solo_avisa(app):
-    app._generando = True
-    app._limpiar_datos()
-    app._generando = False
+def test_limpiar_sin_archivo_solo_avisa(app):
     app.df_original = None
     app._limpiar_datos()
-    assert app.alertas == ["Gráficos en curso", "Sin datos"]
+    assert app.alertas == ["Sin datos"]
     app.page.show_dialog.assert_not_called()
+
+
+def test_al_abrir_y_cerrar_se_borran_los_archivos_de_trabajo(carpeta_de_trabajo):
+    sobrantes = [carpeta_de_trabajo / "mapa.html", carpeta_de_trabajo / "graficos" / "donut.png",
+                 carpeta_de_trabajo / "informe_x1" / "informe.html"]
+    for ruta in sobrantes:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text("datos")
+    (carpeta_de_trabajo / "logs").mkdir(exist_ok=True)
+    main.borrar_archivos_de_trabajo()
+    assert not any(r.exists() for r in sobrantes)
+    assert (carpeta_de_trabajo / "logs").is_dir()      # el registro de errores se conserva
 
 
 def test_el_mapa_se_guarda_en_la_carpeta_de_trabajo(carpeta_de_trabajo):
@@ -308,3 +296,24 @@ def test_al_cargar_se_informan_las_columnas_reconocidas_y_las_que_faltan(app):
     assert "fecha = «Fecha del Hecho»" in app.txt_log.value
     assert "delito = «DELITO»" not in app.txt_log.value      # mismo nombre, no hace falta decirlo
     assert "no tiene columna de hora, comisaría:" in app.txt_log.value
+
+
+def test_el_dialogo_de_filtros_recuerda_lo_aplicado_y_filtra_por_fechas(app):
+    app.aplicar_filtros({"jurisdicciones": ["Comisaria 13°"]})
+    app._abrir_filtros()
+    dialogo = app.page.show_dialog.call_args.args[0]
+    anio, fechas, _, juris, _, _ = dialogo.content.content.controls
+    assert {c.label: c.value for c in juris.controls} == {"Comisaria 13°": True, "Comisaria 15°": False}
+
+    desde, hasta = fechas.controls
+    desde.value, hasta.value = "03/03/2025", "07/03/2025"   # día primero
+    dialogo.actions[0].on_click(None)
+    assert app.df_filtrado["fecha"].dt.day.tolist() == [3, 5, 7]
+
+    hasta.value = "2025-03-07"
+    dialogo.actions[0].on_click(None)
+    assert hasta.error and app.df_filtrado["fecha"].dt.day.tolist() == [3, 5, 7]
+
+    hasta.value = "07/03/2025"
+    dialogo.actions[0].on_click(None)
+    assert hasta.error is None   # al corregirla, el aviso desaparece

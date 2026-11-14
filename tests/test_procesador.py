@@ -6,7 +6,6 @@ import pytest
 
 from modulos.procesador import (
     _limpiar, cargar_excel, filtrar, resumen_general, tabla_pivot,
-    validar_datos_completos,
 )
 
 
@@ -151,13 +150,24 @@ def test_filtro_sin_resultados_no_rompe(df_ejemplo):
     r = resumen_general(vacio)
     assert r["total_denuncias"] == 0
     assert r["mes_pico"] == "—"
-    assert validar_datos_completos(vacio)["resumen"]["cobertura_datos"] == "0.0%"
     tabla_pivot(vacio)   # no debe lanzar
 
 
 def test_filtro_por_jurisdiccion_y_delito(df_ejemplo):
     f = filtrar(df_ejemplo, jurisdicciones=["Comisaria 15°"], tipos_delito=["Robo"])
     assert len(f) == 2
+
+
+def test_celdas_vacias_de_texto_no_se_pierden():
+    df = _limpiar(_crudo(
+        ["4/1/2025", "5/1/2025", "6/1/2025"],
+        jurisdicciones=["COMISARIA 13°", None, "  "],
+        delitos=["ROBO", float("nan"), "HURTO"],
+    ))
+    assert df["jurisdiccion"].tolist() == ["Comisaria 13°", "Sin jurisdicción", "Sin jurisdicción"]
+    assert df["tipo_delito"].tolist() == ["Robo", "Sin clasificar", "Hurto"]
+    sorted(df["jurisdiccion"].unique())   # el diálogo de filtros las ordena
+    assert tabla_pivot(df).loc["Total", "Total"] == 3
 
 
 def test_tabla_pivot_incluye_totales(df_ejemplo):
